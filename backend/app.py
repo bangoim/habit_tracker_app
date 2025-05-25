@@ -10,23 +10,19 @@ app = Flask(__name__)
 # Configurações do Banco de Dados
 app.config["MYSQL_HOST"] = os.environ.get("MYSQL_HOST", "localhost")
 app.config["MYSQL_USER"] = os.environ.get("MYSQL_USER", "root")
-app.config["MYSQL_PASSWORD"] = os.environ.get(
-    "MYSQL_PASSWORD", "root"
-)  # Mude para sua senha real!
+app.config["MYSQL_PASSWORD"] = os.environ.get("MYSQL_PASSWORD", "root")  # Sua senha
 app.config["MYSQL_DB"] = os.environ.get("MYSQL_DB", "habit_tracker")
+
+# ADICIONE ESTA LINHA: Para que os cursores retornem dicionários por padrão
+app.config["MYSQL_CURSORCLASS"] = "DictCursor"
 
 mysql = MySQL(app)
 
 
 # Função auxiliar para calcular a streak
 def calculate_streak(completed_dates_raw):
-    """Calcula a streak consecutiva com base em uma lista de datas de conclusão.
-    As datas devem vir ordenadas da mais recente para a mais antiga.
-    """
     if not completed_dates_raw:
         return 0
-
-    # Converte as datas de date objects ou strings para datetime.date objects e ordena de forma decrescente
     completed_dates = sorted(
         [
             d if isinstance(d, datetime.date) else datetime.date.fromisoformat(str(d))
@@ -34,37 +30,50 @@ def calculate_streak(completed_dates_raw):
         ],
         reverse=True,
     )
-
     current_streak = 0
     today = datetime.date.today()
     yesterday = today - datetime.timedelta(days=1)
-
-    # Checa se o hábito foi completado hoje
+    if not completed_dates:
+        return 0
     if completed_dates[0] == today:
         current_streak = 1
         compare_date = yesterday
-    elif completed_dates[0] == yesterday:  # Se não foi hoje, mas foi ontem
+    elif completed_dates[0] == yesterday:
         current_streak = 1
         compare_date = yesterday - datetime.timedelta(days=1)
-    else:  # Se a data mais recente não é hoje nem ontem, não há streak
+    else:
         return 0
-
-    # Itera sobre as datas restantes para verificar a consecutividade
     for i in range(1, len(completed_dates)):
         if completed_dates[i] == compare_date:
             current_streak += 1
             compare_date -= datetime.timedelta(days=1)
-        elif (
-            completed_dates[i] < compare_date
-        ):  # Se a data é mais antiga que a esperada, a streak foi quebrada
+        elif completed_dates[i] < compare_date:
             break
-        # Se completed_dates[i] > compare_date, significa que há datas duplicadas ou fora de ordem, continue
-
     return current_streak
+
+
+@app.route("/categories", methods=["GET"])
+def get_all_categories():
+    print("LOG: Rota /categories foi chamada")
+    try:
+        # REMOVA dictionary=True daqui
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT id, name FROM categories ORDER BY name ASC")
+        categories = cursor.fetchall()
+        cursor.close()
+        print(f"LOG: Categorias encontradas: {categories}")
+        return jsonify(categories), 200
+    except Exception as e:
+        print(f"LOG: Erro ao obter categorias: {e}")
+        traceback.print_exc()
+        return jsonify(
+            {"error": "Erro interno ao buscar categorias", "details": str(e)}
+        ), 500
 
 
 @app.route("/habits", methods=["POST"])
 def add_habit():
+    print("LOG: Rota POST /habits foi chamada")
     try:
         data = request.json
         name = data["name"]
@@ -73,33 +82,13 @@ def add_habit():
         description = data.get("description")
         target_quantity = data.get("target_quantity")
         target_days_per_week = data.get("target_days_per_week")
+        category_ids = data.get("category_ids", [])
 
-        # Validações básicas (pode ser mais robusto)
-        if count_method not in ["daily", "weekly", "monthly"]:
-            return jsonify(
-                {"error": "Invalid count_method. Must be daily, weekly, or monthly."}
-            ), 400
-        if completion_method not in ["quantity", "minutes"]:
-            return jsonify(
-                {"error": "Invalid completion_method. Must be quantity or minutes."}
-            ), 400
+        if not name:
+            return jsonify({"error": "Name is required"}), 400
+        # Adicione outras validações aqui se necessário
 
-        if (
-            completion_method == "quantity" or completion_method == "minutes"
-        ) and target_quantity is None:
-            return jsonify(
-                {
-                    "error": "target_quantity is required for quantity or minutes completion methods."
-                }
-            ), 400
-
-        if count_method in ["weekly", "monthly"] and target_days_per_week is None:
-            return jsonify(
-                {
-                    "error": "target_days_per_week is required for weekly or monthly habits."
-                }
-            ), 400
-
+        # REMOVA dictionary=True daqui (se estivesse aqui)
         cursor = mysql.connection.cursor()
         cursor.execute(
             "INSERT INTO habits (name, description, count_method, completion_method, target_quantity, target_days_per_week) VALUES (%s, %s, %s, %s, %s, %s)",
@@ -112,225 +101,285 @@ def add_habit():
                 target_days_per_week,
             ),
         )
-        mysql.connection.commit()
-
         habit_id = cursor.lastrowid
-        cursor.close()
 
+        if isinstance(category_ids, list):
+            for category_id in category_ids:
+                try:
+                    cursor.execute(
+                        "INSERT INTO habit_categories (habit_id, category_id) VALUES (%s, %s)",
+                        (habit_id, category_id),
+                    )
+                except Exception as e:
+                    print(
+                        f"Erro ao associar categoria {category_id} ao hábito {habit_id}: {e}"
+                    )
+                    # Considere se deve dar rollback aqui ou apenas logar
+
+        mysql.connection.commit()
+        cursor.close()
+        print(f"LOG: Hábito adicionado com ID: {habit_id}")
         return jsonify({"message": "Habit added successfully!", "id": habit_id}), 201
     except KeyError as e:
+        print(f"LOG: Erro no POST /habits - Missing data: {e}")
+        traceback.print_exc()
         return jsonify({"error": f"Missing data: {e}"}), 400
     except Exception as e:
-        print(f"Erro no POST /habits: {e}")
+        print(f"LOG: Erro no POST /habits: {e}")
         traceback.print_exc()
+        mysql.connection.rollback()
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/habits", methods=["GET"])
 def get_habits():
+    print("LOG: Rota GET /habits foi chamada")
     try:
+        # REMOVA dictionary=True daqui
         cursor = mysql.connection.cursor()
-
         today = datetime.date.today()
         start_of_week = today - datetime.timedelta(days=today.weekday())
-        start_of_month = today.replace(day=1)
 
-        query = """
-        SELECT
-            h.id,
-            h.name,
-            h.description,
-            h.count_method,
-            h.completion_method,
-            h.target_quantity,
-            h.target_days_per_week,
-            h.created_at,
-            (SELECT COUNT(*) FROM habit_records hr_today WHERE hr_today.habit_id = h.id AND hr_today.record_date = %s) > 0 AS is_completed_today,
-            (SELECT MAX(hr_last.record_date) FROM habit_records hr_last WHERE hr_last.habit_id = h.id) AS last_completed_date,
-            COALESCE((SELECT SUM(hr_qty.quantity_completed) FROM habit_records hr_qty WHERE hr_qty.habit_id = h.id AND hr_qty.record_date >= %s AND hr_qty.record_date <= %s), 0) AS current_period_quantity,
-            COALESCE((SELECT COUNT(DISTINCT hr_days.record_date) FROM habit_records hr_days WHERE hr_days.habit_id = h.id AND hr_days.record_date >= %s AND hr_days.record_date <= %s), 0) AS current_period_days_completed
-        FROM
-            habits h
+        base_query = """
+            SELECT
+                h.id, h.name, h.description, h.count_method, h.completion_method,
+                h.target_quantity, h.target_days_per_week, h.created_at,
+                (SELECT COUNT(*) FROM habit_records hr_today WHERE hr_today.habit_id = h.id AND hr_today.record_date = %s) > 0 AS is_completed_today,
+                (SELECT MAX(hr_last.record_date) FROM habit_records hr_last WHERE hr_last.habit_id = h.id) AS last_completed_date,
+                COALESCE((SELECT SUM(hr_qty.quantity_completed) FROM habit_records hr_qty WHERE hr_qty.habit_id = h.id AND hr_qty.record_date >= %s AND hr_qty.record_date <= %s), 0) AS current_period_quantity,
+                COALESCE((SELECT COUNT(DISTINCT hr_days.record_date) FROM habit_records hr_days WHERE hr_days.habit_id = h.id AND hr_days.record_date >= %s AND hr_days.record_date <= %s), 0) AS current_period_days_completed
+            FROM habits h
         """
 
-        cursor.execute(
-            query,
-            (
-                today.isoformat(),
-                start_of_week.isoformat(),
-                today.isoformat(),
-                start_of_week.isoformat(),
-                today.isoformat(),
-            ),
+        query_params_dates = [
+            today.isoformat(),
+            start_of_week.isoformat(),
+            today.isoformat(),
+            start_of_week.isoformat(),
+            today.isoformat(),
+        ]
+
+        filter_category_id = request.args.get("category_id", type=int)
+        final_query_params = list(query_params_dates)
+
+        # Adiciona o JOIN e o WHERE para filtrar por categoria apenas se filter_category_id for fornecido
+        # E garante que a query principal não tenha um WHERE antes disso que possa causar conflito.
+        # Se filter_category_id for o único critério de filtro principal na tabela 'h', esta abordagem é correta.
+        if filter_category_id:
+            # Modifica a query para buscar apenas hábitos que tenham a categoria especificada
+            # Precisamos garantir que 'h' seja o alias correto e que o JOIN não duplique hábitos
+            # se um hábito puder estar em múltiplas categorias (o que não é o caso aqui se filtrarmos por UMA categoria_id)
+            # No entanto, para retornar TODOS os hábitos e depois filtrar no frontend, não adicionamos o JOIN aqui.
+            # Se o objetivo é filtrar NO BACKEND, a query precisa ser ajustada.
+            # A query atual com JOIN + WHERE retornaria hábitos que correspondem à categoria.
+            # Vamos manter o filtro no backend como está.
+            base_query += """
+                JOIN habit_categories hc ON h.id = hc.habit_id
+                WHERE hc.category_id = %s
+            """
+            final_query_params.append(filter_category_id)
+
+        base_query += " ORDER BY h.created_at DESC"
+
+        print(f"LOG: Executando query de hábitos com params: {final_query_params}")
+        cursor.execute(base_query, tuple(final_query_params))
+        habits_results = cursor.fetchall()
+        print(
+            f"LOG: Hábitos encontrados (antes de adicionar categorias e streak): {len(habits_results)}"
         )
 
-        habits = cursor.fetchall()
-
-        habits_list = []
-        if cursor.description:
-            column_names = [desc[0] for desc in cursor.description]
-            for habit_tuple in habits:
-                habit_dict = dict(zip(column_names, habit_tuple))
-
-                habit_dict["is_completed_today"] = bool(
-                    habit_dict["is_completed_today"]
-                )
-
-                if "last_completed_date" in habit_dict and isinstance(
-                    habit_dict["last_completed_date"], datetime.date
-                ):
-                    habit_dict["last_completed_date"] = habit_dict[
-                        "last_completed_date"
-                    ].isoformat()
-
-                # Buscar todas as datas de completude para calcular a streak
-                habit_id = habit_dict["id"]
-                record_dates_query = """
-                SELECT record_date FROM habit_records WHERE habit_id = %s ORDER BY record_date DESC
+        for habit in habits_results:  # 'habit' agora é um dicionário
+            # REMOVA dictionary=True daqui
+            cat_cursor = mysql.connection.cursor()
+            cat_cursor.execute(
                 """
-                temp_cursor = mysql.connection.cursor()
-                temp_cursor.execute(record_dates_query, (habit_id,))
-                completed_dates_raw = [row[0] for row in temp_cursor.fetchall()]
-                temp_cursor.close()
+                SELECT c.id, c.name FROM categories c
+                JOIN habit_categories hc ON c.id = hc.category_id
+                WHERE hc.habit_id = %s
+            """,
+                (habit["id"],),  # Acesso por chave, pois habit é um dicionário
+            )
+            habit["categories"] = cat_cursor.fetchall()
+            cat_cursor.close()
 
-                # Calcular a streak usando a função auxiliar
-                habit_dict["current_streak"] = calculate_streak(completed_dates_raw)
+            # REMOVA dictionary=True daqui
+            streak_cursor = mysql.connection.cursor()
+            streak_cursor.execute(
+                "SELECT record_date FROM habit_records WHERE habit_id = %s ORDER BY record_date DESC",
+                (habit["id"],),
+            )
+            # Com MYSQL_CURSORCLASS = 'DictCursor', fetchall() retorna [{ 'record_date': ...}, ...]
+            completed_dates_raw_dicts = streak_cursor.fetchall()
+            completed_dates_raw = [
+                row["record_date"] for row in completed_dates_raw_dicts
+            ]
+            streak_cursor.close()
+            habit["current_streak"] = calculate_streak(completed_dates_raw)
 
-                habits_list.append(habit_dict)
+            habit["is_completed_today"] = bool(habit["is_completed_today"])
+            if isinstance(habit.get("last_completed_date"), datetime.date):
+                habit["last_completed_date"] = habit["last_completed_date"].isoformat()
 
         cursor.close()
-
-        return jsonify(habits_list), 200
+        print(f"LOG: Retornando {len(habits_results)} hábitos processados.")
+        return jsonify(habits_results), 200
     except Exception as e:
-        print(f"Erro ao obter hábitos: {e}")
+        print(f"LOG: Erro ao obter hábitos: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/habit_records", methods=["POST"])
-def add_habit_record():
-    try:
-        data = request.json
-        habit_id = data["habit_id"]
-        record_date_str = data["record_date"]  # Ex: 'YYYY-MM-DD'
-        quantity_completed = data.get(
-            "quantity_completed"
-        )  # Pode ser nulo se o método não for de quantidade/minutos
-
-        # Validação básica
-        if not habit_id or not record_date_str:
-            return jsonify({"error": "habit_id and record_date are required."}), 400
-
-        # Opcional: Validar se habit_id existe na tabela habits
-        cursor = mysql.connection.cursor()
-        cursor.execute("SELECT id FROM habits WHERE id = %s", (habit_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
-
-        # Tenta inserir o registro de completude
-        # A restrição UNIQUE (habit_id, record_date) no MySQL vai evitar duplicatas no mesmo dia.
-        # Se a inserção falhar por duplicidade, o DBAPIError será capturado.
-        cursor.execute(
-            "INSERT INTO habit_records (habit_id, record_date, quantity_completed) VALUES (%s, %s, %s)",
-            (habit_id, record_date_str, quantity_completed),
-        )
-        mysql.connection.commit()
-
-        record_id = cursor.lastrowid
-        cursor.close()
-
-        return jsonify(
-            {"message": "Habit record added successfully!", "id": record_id}
-        ), 201
-    except Exception as e:
-        print(f"Erro ao adicionar registro de hábito: {e}")
-        traceback.print_exc()
-        if "Duplicate entry" in str(e) and "for key 'habit_id'" in str(e):
-            return jsonify(
-                {"error": "Registro para este hábito e data já existe."}
-            ), 409
-        return jsonify({"error": str(e)}), 500
-
-
-# NOVO: Rota para atualizar um hábito existente
 @app.route("/habits/<int:habit_id>", methods=["PUT"])
 def update_habit(habit_id):
+    print(f"LOG: Rota PUT /habits/{habit_id} foi chamada")
     try:
         data = request.json
-
-        # Validação básica: verificar se o hábito existe
+        # REMOVA dictionary=True daqui
         cursor = mysql.connection.cursor()
+
         cursor.execute("SELECT id FROM habits WHERE id = %s", (habit_id,))
         if not cursor.fetchone():
             cursor.close()
             return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
 
-        # Constrói a query de atualização dinamicamente
-        update_fields = []
-        params = []
+        update_fields_habits = []
+        params_habits = []
 
-        if "name" in data:
-            update_fields.append("name = %s")
-            params.append(data["name"])
-        if "description" in data:
-            update_fields.append("description = %s")
-            params.append(data["description"])
-        if "count_method" in data:
-            update_fields.append("count_method = %s")
-            params.append(data["count_method"])
-        if "completion_method" in data:
-            update_fields.append("completion_method = %s")
-            params.append(data["completion_method"])
-        if "target_quantity" in data:
-            update_fields.append("target_quantity = %s")
-            params.append(data["target_quantity"])
-        if "target_days_per_week" in data:
-            update_fields.append("target_days_per_week = %s")
-            params.append(data["target_days_per_week"])
+        # Campos do hábito a serem atualizados
+        allowed_fields = [
+            "name",
+            "description",
+            "count_method",
+            "completion_method",
+            "target_quantity",
+            "target_days_per_week",
+        ]
+        for field in allowed_fields:
+            if field in data:
+                update_fields_habits.append(f"{field} = %s")
+                params_habits.append(data[field])
 
-        if not update_fields:
-            return jsonify(
-                {"message": "No fields to update."}
-            ), 200  # Nada para atualizar
+        if update_fields_habits:
+            query_habits = (
+                "UPDATE habits SET "
+                + ", ".join(update_fields_habits)
+                + " WHERE id = %s"
+            )
+            params_habits.append(habit_id)
+            print(
+                f"LOG: Atualizando hábito {habit_id} com query: {query_habits} e params: {params_habits}"
+            )
+            cursor.execute(query_habits, tuple(params_habits))
 
-        query = "UPDATE habits SET " + ", ".join(update_fields) + " WHERE id = %s"
-        params.append(habit_id)
+        if "category_ids" in data:
+            new_category_ids = data.get("category_ids", [])
+            print(
+                f"LOG: Atualizando categorias para hábito {habit_id} com IDs: {new_category_ids}"
+            )
+            cursor.execute(
+                "DELETE FROM habit_categories WHERE habit_id = %s", (habit_id,)
+            )
+            if isinstance(new_category_ids, list):
+                for category_id in new_category_ids:
+                    try:
+                        cursor.execute(
+                            "INSERT INTO habit_categories (habit_id, category_id) VALUES (%s, %s)",
+                            (habit_id, category_id),
+                        )
+                    except Exception as e:
+                        print(
+                            f"Erro ao associar categoria {category_id} na atualização do hábito {habit_id}: {e}"
+                        )
 
-        cursor.execute(query, tuple(params))
         mysql.connection.commit()
-
         cursor.close()
+        print(f"LOG: Hábito {habit_id} atualizado com sucesso.")
         return jsonify(
             {"message": f"Habit with ID {habit_id} updated successfully!"}
         ), 200
     except Exception as e:
-        print(f"Erro ao atualizar hábito (ID: {habit_id}): {e}")
+        print(f"LOG: Erro ao atualizar hábito (ID: {habit_id}): {e}")
         traceback.print_exc()
+        mysql.connection.rollback()
         return jsonify({"error": str(e)}), 500
 
 
-# NOVO: Rota para excluir um hábito
 @app.route("/habits/<int:habit_id>", methods=["DELETE"])
 def delete_habit(habit_id):
+    print(f"LOG: Rota DELETE /habits/{habit_id} foi chamada")
     try:
+        # REMOVA dictionary=True daqui
         cursor = mysql.connection.cursor()
         cursor.execute("DELETE FROM habits WHERE id = %s", (habit_id,))
         mysql.connection.commit()
 
         if cursor.rowcount == 0:
             cursor.close()
+            print(f"LOG: Hábito {habit_id} não encontrado para exclusão.")
             return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
 
         cursor.close()
+        print(f"LOG: Hábito {habit_id} excluído com sucesso.")
         return jsonify(
             {"message": f"Habit with ID {habit_id} deleted successfully!"}
         ), 200
     except Exception as e:
-        print(f"Erro ao excluir hábito (ID: {habit_id}): {e}")
+        print(f"LOG: Erro ao excluir hábito (ID: {habit_id}): {e}")
         traceback.print_exc()
+        mysql.connection.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/habit_records", methods=["POST"])
+def add_habit_record():
+    print("LOG: Rota POST /habit_records foi chamada")
+    try:
+        data = request.json
+        habit_id = data["habit_id"]
+        record_date_str = data["record_date"]
+        quantity_completed = data.get("quantity_completed")
+
+        if not habit_id or not record_date_str:
+            return jsonify({"error": "habit_id and record_date are required."}), 400
+
+        # REMOVA dictionary=True daqui
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT id FROM habits WHERE id = %s", (habit_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            print(f"LOG: Hábito {habit_id} não encontrado para adicionar registro.")
+            return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
+
+        cursor.execute(
+            "INSERT INTO habit_records (habit_id, record_date, quantity_completed) VALUES (%s, %s, %s)",
+            (habit_id, record_date_str, quantity_completed),
+        )
+        mysql.connection.commit()
+        record_id = cursor.lastrowid
+        cursor.close()
+        print(
+            f"LOG: Registro de hábito adicionado com ID: {record_id} para o hábito {habit_id}"
+        )
+        return jsonify(
+            {"message": "Habit record added successfully!", "id": record_id}
+        ), 201
+    except Exception as e:
+        print(f"LOG: Erro ao adicionar registro de hábito: {e}")
+        traceback.print_exc()
+        if (
+            "Duplicate entry"
+            in str(
+                e
+            )  # Checagem genérica, ideal seria pelo código de erro do MySQL para duplicidade
+            # and "for key 'habit_records.habit_id_record_date_unique'" in str(e).lower() # Esta parte é muito específica
+        ):
+            return jsonify(
+                {"error": "Registro para este hábito e data já existe."}
+            ), 409
+        mysql.connection.rollback()
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    print("LOG: Iniciando servidor Flask...")
+    app.run(host="0.0.0.0", port=5000, debug=True)
