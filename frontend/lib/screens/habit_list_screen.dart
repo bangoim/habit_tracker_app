@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/habit.dart'; // Importa o modelo Habit
-import 'package:frontend/utils/string_extensions.dart'; // Importa a extensão capitalize
-import 'package:frontend/main.dart'; // << NOVO: Importa o main.dart para acessar HabitFormScreen
+import 'package:frontend/main.dart'; // Importa o main.dart para acessar HabitFormScreen
 
 class HabitListScreen extends StatefulWidget {
   const HabitListScreen({super.key});
@@ -13,30 +12,22 @@ class HabitListScreen extends StatefulWidget {
 }
 
 class _HabitListScreenState extends State<HabitListScreen> {
-  late Future<List<Habit>>
-  futureHabits; // Futuro que conterá a lista de hábitos
+  late Future<List<Habit>> futureHabits;
 
   @override
   void initState() {
     super.initState();
-    futureHabits =
-        fetchHabits(); // Inicia a busca pelos hábitos quando a tela é criada
+    futureHabits = fetchHabits();
   }
 
   Future<List<Habit>> fetchHabits() async {
-    final String apiUrl =
-        'http://10.0.2.2:5000/habits'; // A mesma URL do backend
+    final String apiUrl = 'http://10.0.2.2:5000/habits';
     try {
       final response = await http.get(Uri.parse(apiUrl));
-
       if (response.statusCode == 200) {
-        // Se o servidor retornar um status OK (200),
-        // parseie o JSON e mapeie para uma lista de objetos Habit.
         List<dynamic> jsonList = jsonDecode(response.body);
         return jsonList.map((json) => Habit.fromJson(json)).toList();
       } else {
-        // Se o servidor retornar uma resposta de erro,
-        // lance uma exceção.
         throw Exception('Falha ao carregar hábitos: ${response.statusCode}');
       }
     } catch (e) {
@@ -44,18 +35,13 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
-  // Função para registrar a completude do hábito
   Future<void> _recordHabitCompletion(
     int habitId,
     String completionMethod, {
     int? quantityCompleted,
   }) async {
     final String apiUrl = 'http://10.0.2.2:5000/habit_records';
-    final String recordDate =
-        DateTime.now().toIso8601String().split(
-          'T',
-        )[0]; // Data atual no formato YYYY-MM-DD
-
+    final String recordDate = DateTime.now().toIso8601String().split('T')[0];
     try {
       final response = await http.post(
         Uri.parse(apiUrl),
@@ -68,17 +54,14 @@ class _HabitListScreenState extends State<HabitListScreen> {
           'quantity_completed': quantityCompleted,
         }),
       );
-
       if (response.statusCode == 201) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hábito registrado com sucesso!')),
         );
-        // Recarrega a lista de hábitos após um registro bem-sucedido para atualizar o status visual
         setState(() {
           futureHabits = fetchHabits();
         });
       } else if (response.statusCode == 409) {
-        // Conflito (já registrado hoje)
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hábito já registrado para hoje!')),
         );
@@ -97,32 +80,27 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
-  // Função para mostrar o diálogo de entrada de quantidade/minutos
   Future<void> _showQuantityDialog(Habit habit) async {
     TextEditingController quantityController = TextEditingController();
-    final _formKeyDialog =
-        GlobalKey<FormState>(); // Chave para validar o formulário no diálogo
-
+    final formKeyDialog = GlobalKey<FormState>();
     return showDialog<void>(
       context: context,
-      barrierDismissible: false, // O usuário deve tocar no botão
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text('Registrar ${habit.name}'),
           content: SingleChildScrollView(
             child: Form(
-              // Adiciona um Form para validação no diálogo
-              key: _formKeyDialog,
+              key: formKeyDialog,
               child: ListBody(
                 children: <Widget>[
                   TextFormField(
                     controller: quantityController,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText:
-                          habit.completionMethod == 'quantity'
-                              ? 'Quantidade realizada'
-                              : 'Minutos realizados',
+                      labelText: habit.completionMethod == 'quantity'
+                          ? 'Quantidade realizada'
+                          : 'Minutos realizados',
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
@@ -148,14 +126,13 @@ class _HabitListScreenState extends State<HabitListScreen> {
             TextButton(
               child: const Text('Registrar'),
               onPressed: () {
-                if (_formKeyDialog.currentState!.validate()) {
-                  // Valida o formulário antes de registrar
+                if (formKeyDialog.currentState!.validate()) {
                   _recordHabitCompletion(
                     habit.id,
                     habit.completionMethod,
                     quantityCompleted: int.parse(quantityController.text),
                   );
-                  Navigator.of(context).pop(); // Fecha o diálogo
+                  Navigator.of(context).pop();
                 }
               },
             ),
@@ -165,11 +142,8 @@ class _HabitListScreenState extends State<HabitListScreen> {
     );
   }
 
-  // Função para excluir um hábito (com confirmação)
   Future<void> _deleteHabit(int habitId) async {
     final String apiUrl = 'http://10.0.2.2:5000/habits/$habitId';
-
-    // Mostra um diálogo de confirmação antes de excluir
     bool? confirmDelete = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
@@ -180,34 +154,24 @@ class _HabitListScreenState extends State<HabitListScreen> {
           ),
           actions: <Widget>[
             TextButton(
-              onPressed:
-                  () => Navigator.of(
-                    context,
-                  ).pop(false), // Retorna false se cancelar
+              onPressed: () => Navigator.of(context).pop(false),
               child: const Text('Cancelar'),
             ),
             TextButton(
-              onPressed:
-                  () => Navigator.of(
-                    context,
-                  ).pop(true), // Retorna true se confirmar
+              onPressed: () => Navigator.of(context).pop(true),
               child: const Text('Excluir'),
             ),
           ],
         );
       },
     );
-
     if (confirmDelete == true) {
-      // Se o usuário confirmou a exclusão
       try {
         final response = await http.delete(Uri.parse(apiUrl));
-
         if (response.statusCode == 200) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Hábito excluído com sucesso!')),
           );
-          // Recarrega a lista de hábitos após a exclusão bem-sucedida
           setState(() {
             futureHabits = fetchHabits();
           });
@@ -231,8 +195,26 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
+  Widget _buildTargetText(Habit habit) {
+    if (habit.targetQuantity != null) {
+      return Text(
+        'Alvo: ${habit.targetQuantity} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
+         style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+      );
+    } else if (habit.targetDaysPerWeek != null) {
+      return Text('Alvo: ${habit.targetDaysPerWeek} dias no período',
+         style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Cores de referência para o botão de checkmark (baseado na imagem (3).png)
+    const checkButtonBackgroundColor = Color(0xFFEDE7F6); // Lilás bem claro (similar a Colors.deepPurple.shade50)
+    final checkButtonIconColor = Colors.deepPurple.shade600; // Roxo escuro para o ícone
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Meus Hábitos'),
@@ -241,7 +223,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
             icon: const Icon(Icons.refresh),
             onPressed: () {
               setState(() {
-                futureHabits = fetchHabits(); // Recarrega a lista de hábitos
+                futureHabits = fetchHabits();
               });
             },
           ),
@@ -251,177 +233,144 @@ class _HabitListScreenState extends State<HabitListScreen> {
         future: futureHabits,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            // Enquanto espera, mostra um indicador de progresso
             return const Center(child: CircularProgressIndicator());
           } else if (snapshot.hasError) {
-            // Se ocorrer um erro, mostra uma mensagem
-            return Center(child: Text('Erro: ${snapshot.error}'));
+            return Center(child: Text('${snapshot.error}'));
           } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            // Se não houver dados, mostra uma mensagem de "nenhum hábito"
             return const Center(child: Text('Nenhum hábito cadastrado ainda.'));
           } else {
-            // Se houver dados, exibe a lista de hábitos
             return ListView.builder(
+              padding: const EdgeInsets.only(bottom: 80, top: 8.0, left: 8.0, right: 8.0),
               itemCount: snapshot.data!.length,
               itemBuilder: (context, index) {
                 Habit habit = snapshot.data![index];
                 return Card(
-                  margin: const EdgeInsets.all(8.0),
+                  margin: const EdgeInsets.symmetric(vertical: 6.0),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), // Bordas mais arredondadas
+                  elevation: 2,
                   child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    padding: const EdgeInsets.only(top: 16.0, left: 16.0, right: 16.0, bottom: 8.0),
+                    child: Stack(
                       children: [
-                        Row(
-                          // ENVOLVE O NOME DO HÁBITO E O INDICADOR DE STATUS EM UM ROW
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(
+                            // Nome do Hábito
+                            Padding(
+                              padding: const EdgeInsets.only(right: 56.0), // Espaço para o botão de check no canto superior direito
                               child: Text(
                                 habit.name,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
+                                style: const TextStyle( // Estilo do título alterado
+                                  fontSize: 22, // Tamanho da fonte aumentado
+                                  fontWeight: FontWeight.bold, // Peso da fonte
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(height: 8), // Espaço entre título e informações
+
+                            _buildTargetText(habit),
+                            const SizedBox(height: 4),
+
+                            if (habit.completionMethod == 'quantity' ||
+                                habit.completionMethod == 'minutes')
+                              Text(
+                                'Progresso: ${habit.currentPeriodQuantity ?? 0} de ${habit.targetQuantity ?? 'N/A'} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
+                                style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                              )
+                            else if (habit.countMethod == 'weekly' ||
+                                habit.countMethod == 'monthly')
+                              Text(
+                                'Progresso: ${habit.currentPeriodDaysCompleted ?? 0} de ${habit.targetDaysPerWeek ?? 'N/A'} dias',
+                                style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                              )
+                            else
+                              const SizedBox.shrink(),
+                            const SizedBox(height: 4),
+
+                            Text(
+                              'Streak: ${habit.currentStreak} dias',
+                              style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                            ),
+                            const SizedBox(height: 10), // Espaço para o menu no canto inferior esquerdo
+                          ],
+                        ),
+
+                        // Botão de Checkmark (estilo FAB squircle no canto SUPERIOR direito)
+                        Positioned(
+                          top: 1, // Ajuste para alinhar com o topo do card, considerando o padding
+                          right: 1, // Ajuste para alinhar com a direita do card
+                          child: Material(
+                            color: habit.isCompletedToday ? Colors.grey.shade300 : checkButtonBackgroundColor,
+                            borderRadius: BorderRadius.circular(12.0), // Formato squircle
+                            elevation: habit.isCompletedToday ? 0 : 2,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12.0),
+                              onTap: habit.isCompletedToday
+                                  ? null
+                                  : () {
+                                      if (habit.completionMethod == 'quantity' ||
+                                          habit.completionMethod == 'minutes') {
+                                        _showQuantityDialog(habit);
+                                      } else {
+                                        _recordHabitCompletion(
+                                            habit.id, habit.completionMethod);
+                                      }
+                                    },
+                              child: Container(
+                                width: 55, // Tamanho do botão
+                                height: 55, // Tamanho do botão
+                                alignment: Alignment.center,
+                                child: Icon(
+                                  Icons.check_rounded,
+                                  size: 26.0, // Tamanho do ícone
+                                  color: habit.isCompletedToday ? Colors.grey.shade700 : checkButtonIconColor,
                                 ),
                               ),
                             ),
-                            // Indicador de status de completude hoje usando operador ternário
-                            habit.isCompletedToday
-                                ? const Icon(
-                                  Icons.check_circle,
-                                  color: Colors.green,
-                                  size: 24.0,
-                                )
-                                : const Icon(
-                                  Icons.radio_button_unchecked,
-                                  color: Colors.grey,
-                                  size: 24.0,
-                                ),
+                          ),
+                        ),
 
-                            // PopupMenuButton para Editar/Excluir
-                            PopupMenuButton<String>(
-                              onSelected: (value) async {
-                                // Marque como async
-                                if (value == 'edit') {
-                                  // Navega para a tela de edição, passando o hábito
-                                  final result = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder:
-                                          (context) =>
-                                              HabitFormScreen(habit: habit),
-                                    ), // Passa o hábito para edição
-                                  );
-                                  // Se a edição foi bem-sucedida (retornou true), recarrega a lista
-                                  if (result == true) {
-                                    setState(() {
-                                      futureHabits = fetchHabits();
-                                    });
-                                  }
-                                } else if (value == 'delete') {
-                                  // Chama a função de exclusão
-                                  _deleteHabit(habit.id);
+                        // Menu de 3 Pontos (canto INFERIOR esquerdo)
+                        Positioned(
+                          bottom: 0, // Ajuste para o canto inferior
+                          right: 4,   // Ajuste para "mais no canto"
+                          child: PopupMenuButton<String>(
+                            icon: Icon(Icons.more_vert, color: Colors.grey.shade700, size: 26),
+                            offset: const Offset(0, 30), // Desloca o menu para baixo para não cobrir o ícone
+                            onSelected: (value) async {
+                              if (value == 'edit') {
+                                final result = await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        HabitFormScreen(habit: habit),
+                                  ),
+                                );
+                                if (result == true) {
+                                  setState(() {
+                                    futureHabits = fetchHabits();
+                                  });
                                 }
-                              },
-                              itemBuilder:
-                                  (BuildContext context) =>
-                                      <PopupMenuEntry<String>>[
-                                        const PopupMenuItem<String>(
-                                          value: 'edit',
-                                          child: Text('Editar'),
-                                        ),
-                                        const PopupMenuItem<String>(
-                                          value: 'delete',
-                                          child: Text('Excluir'),
-                                        ),
-                                      ],
-                            ),
-                          ],
-                        ),
-                        if (habit.description != null &&
-                            habit.description!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4.0),
-                            child: Text(habit.description!),
-                          ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          'Método de Contagem: ${habit.countMethod.capitalize()}',
-                        ),
-                        Text(
-                          'Método de Completude: ${habit.completionMethod.capitalize()}',
-                        ),
-                        if (habit.targetQuantity != null)
-                          Text(
-                            'Alvo: ${habit.targetQuantity} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
-                          ),
-                        if (habit.targetDaysPerWeek != null)
-                          Text(
-                            'Dias na Semana/Mês: ${habit.targetDaysPerWeek}',
-                          ),
-
-                        // Exibir última data de completude usando operador ternário
-                        habit.lastCompletedDate != null
-                            ? Text(
-                              'Última Conclusão: ${habit.lastCompletedDate}',
-                            )
-                            : const Text('Última Conclusão: N/A'),
-
-                        // Exibir progresso do período (semanal/mensal ou quantidade/minutos)
-                        habit.completionMethod == 'quantity' ||
-                                habit.completionMethod == 'minutes'
-                            ? Text(
-                              'Progresso Período: ${habit.currentPeriodQuantity ?? 0} de ${habit.targetQuantity ?? 'N/A'} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
-                            )
-                            : (habit.countMethod == 'weekly' ||
-                                    habit.countMethod == 'monthly'
-                                ? Text(
-                                  'Dias Completos: ${habit.currentPeriodDaysCompleted ?? 0} de ${habit.targetDaysPerWeek ?? 'N/A'} dias',
-                                )
-                                : const SizedBox.shrink()), // Exibe um widget vazio se nenhuma condição for atendida
-
-                        Text(
-                          'Streak: ${habit.currentStreak} dias',
-                        ), // Exibir a Streak
-
-                        Text(
-                          'Criado em: ${habit.createdAt.split(' ')[0]}',
-                        ), // Mostra apenas a data
-                        // Botão para marcar como feito
-                        const SizedBox(height: 10.0), // Espaçamento
-                        Align(
-                          // Alinha o botão à direita ou no centro
-                          alignment: Alignment.bottomRight, // Ou .center
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                habit.isCompletedToday
-                                    ? null
-                                    : () {
-                                      // Desabilita o botão se já foi completado hoje
-                                      if (habit.completionMethod ==
-                                              'quantity' ||
-                                          habit.completionMethod == 'minutes') {
-                                        _showQuantityDialog(
-                                          habit,
-                                        ); // Pede a quantidade/minutos
-                                      } else {
-                                        _recordHabitCompletion(
-                                          habit.id,
-                                          habit.completionMethod,
-                                        ); // Marca diretamente (para 1x ou outras sem quantidade)
-                                      }
-                                    },
-                            icon: const Icon(Icons.check_circle_outline),
-                            label: const Text('Marcar como Feito'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor:
-                                  habit.isCompletedToday
-                                      ? Colors.grey[400]
-                                      : Colors
-                                          .blue, // Cor cinza se desabilitado
-                              foregroundColor: Colors.white,
-                            ),
+                              } else if (value == 'delete') {
+                                _deleteHabit(habit.id);
+                              }
+                            },
+                            itemBuilder: (BuildContext context) =>
+                                <PopupMenuEntry<String>>[
+                                  const PopupMenuItem<String>(
+                                    value: 'edit',
+                                    child: Text('Editar'),
+                                  ),
+                                  const PopupMenuItem<String>(
+                                    value: 'delete',
+                                    child: Text('Excluir'),
+                                  ),
+                                ],
                           ),
                         ),
+                        // O círculo de status foi removido.
                       ],
                     ),
                   ),
@@ -431,29 +380,23 @@ class _HabitListScreenState extends State<HabitListScreen> {
           }
         },
       ),
-      // NOVO: FloatingActionButton para adicionar novo hábito
       floatingActionButton: FloatingActionButton(
-        // << NOVO
         onPressed: () async {
-          // << NOVO
           final result = await Navigator.push(
-            // << NOVO
-            context, // << NOVO
+            context,
             MaterialPageRoute(
               builder: (context) => const HabitFormScreen(),
-            ), // << NOVO: Vai para a tela de cadastro
-          ); // << NOVO
+            ),
+          );
           if (result == true) {
-            // << NOVO: Se voltou com 'true' (cadastro/edição bem-sucedida)
             setState(() {
-              // << NOVO
-              futureHabits = fetchHabits(); // << NOVO: Recarrega a lista
-            }); // << NOVO
-          } // << NOVO
-        }, // << NOVO
-        child: const Icon(Icons.add), // << NOVO: Ícone de adição
-        tooltip: 'Adicionar novo hábito', // << NOVO
-      ), // << NOVO (continuação)
+              futureHabits = fetchHabits();
+            });
+          }
+        },
+        child: const Icon(Icons.add),
+        tooltip: 'Adicionar novo hábito',
+      ),
     );
   }
 }

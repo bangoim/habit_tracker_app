@@ -3,7 +3,7 @@ import 'package:flutter/services.dart'; // Importa para o FilteringTextInputForm
 import 'dart:convert'; // Importa para trabalhar com JSON
 import 'package:http/http.dart' as http; // Importa para fazer requisições HTTP
 import 'package:frontend/screens/habit_list_screen.dart'; // Importa a tela de listagem
-import 'package:frontend/utils/string_extensions.dart'; // Importa a extensão capitalize
+// import 'package:frontend/utils/string_extensions.dart'; // Removido pois não é usado neste arquivo diretamente
 import 'package:frontend/models/habit.dart'; // Importa o modelo Habit para uso na edição
 import 'package:frontend/screens/selection_screen.dart'; // Importa a tela de seleção
 
@@ -19,19 +19,18 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Habit Tracker',
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: const HabitListScreen(), // Tela inicial é a lista de hábitos
+      home: const HabitListScreen(),
     );
   }
 }
 
-// A classe HabitFormScreen agora aceita um Habit opcional para edição
 class HabitFormScreen extends StatefulWidget {
-  final Habit? habit; // Hábito a ser editado (opcional)
+  final Habit? habit;
 
   const HabitFormScreen({
     super.key,
     this.habit,
-  }); // Construtor para receber o hábito
+  });
 
   @override
   _HabitFormScreenState createState() => _HabitFormScreenState();
@@ -46,12 +45,11 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
   final TextEditingController _targetDaysPerWeekController =
       TextEditingController();
 
-  String? _selectedCountMethod; // Agora representa o "Intervalo"
-  String? _selectedCompletionMethod; // Agora representa o "Tipo"
+  String? _selectedCountMethod;
+  String? _selectedCompletionMethod;
 
   bool _formChanged = false;
 
-  // Listas e Mapas de Tradução para Intervalo
   final List<String> _intervals = ['daily', 'weekly', 'monthly'];
   final Map<String, String> _intervalDisplayNames = {
     'daily': 'Diário',
@@ -59,12 +57,10 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
     'monthly': 'Mensal',
   };
 
-  // Listas e Mapas de Tradução para Tipo de Completude
-  final List<String> _completionTypes = ['quantity', 'minutes', 'none'];
+  final List<String> _completionTypes = ['quantity', 'minutes'];
   final Map<String, String> _completionTypeDisplayNames = {
     'quantity': 'Quantidade',
     'minutes': 'Minutos',
-    'none': 'Nenhum',
   };
 
   @override
@@ -88,11 +84,13 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
     }
 
     final bool isEditing = widget.habit != null;
+    // REVERTIDO PARA 10.0.2.2 para emulador Android
     String apiUrl = 'http://10.0.2.2:5000/habits';
     String successMessage = 'Hábito adicionado com sucesso!';
     String errorMessage = 'Erro ao adicionar hábito:';
 
     if (isEditing) {
+      // REVERTIDO PARA 10.0.2.2 para emulador Android
       apiUrl = 'http://10.0.2.2:5000/habits/${widget.habit!.id}';
       successMessage = 'Hábito atualizado com sucesso!';
       errorMessage = 'Erro ao atualizar hábito:';
@@ -108,11 +106,11 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
         'count_method': _selectedCountMethod,
         'completion_method': _selectedCompletionMethod,
         'target_quantity':
-            _selectedCompletionMethod == 'none'
-                ? null
-                : (_targetQuantityController.text.isEmpty
+            (_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes')
+                ? (_targetQuantityController.text.isEmpty
                     ? null
-                    : int.parse(_targetQuantityController.text)),
+                    : int.parse(_targetQuantityController.text))
+                : null,
         'target_days_per_week':
             _targetDaysPerWeekController.text.isEmpty
                 ? null
@@ -140,7 +138,7 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(successMessage)));
-        _formChanged = false;
+        _formChanged = false; // Reseta o estado de alteração
         Navigator.pop(context, true);
       } else {
         final errorData = jsonDecode(response.body);
@@ -165,7 +163,7 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
 
     return WillPopScope(
       onWillPop: () async {
-        if (_formChanged && !isEditing) {
+        if (_formChanged) { // Simplificado: verifica apenas se houve alteração
           return await showDialog<bool>(
                 context: context,
                 builder: (BuildContext context) {
@@ -198,7 +196,7 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
               isEditing
                   ? IconButton(
                     icon: const Icon(Icons.arrow_back),
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.pop(context), // Não precisa verificar _formChanged aqui
                   )
                   : null,
         ),
@@ -206,12 +204,20 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
           padding: const EdgeInsets.all(16.0),
           child: Form(
             key: _formKey,
+            onChanged: () { // Detecta mudanças em qualquer campo do formulário
+              if (!_formChanged) {
+                setState(() {
+                  _formChanged = true;
+                });
+              }
+            },
             child: ListView(
               children: <Widget>[
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(
                     labelText: 'Nome do Hábito',
+                    border: OutlineInputBorder(),
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
@@ -219,23 +225,19 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     }
                     return null;
                   },
-                  onChanged: (value) {
-                    if (!_formChanged) setState(() => _formChanged = true);
-                  },
                 ),
+                const SizedBox(height: 16),
                 TextFormField(
                   controller: _descriptionController,
                   decoration: const InputDecoration(
                     labelText: 'Descrição (opcional)',
+                    border: OutlineInputBorder(),
                   ),
                   maxLines: 3,
-                  onChanged: (value) {
-                    if (!_formChanged) setState(() => _formChanged = true);
-                  },
                 ),
-                // NOVO: TextFormField para "Intervalo" (abrirá uma tela de seleção)
+                const SizedBox(height: 16),
                 TextFormField(
-                  readOnly: true, // Impede a digitação direta
+                  readOnly: true,
                   controller: TextEditingController(
                     text:
                         _selectedCountMethod != null
@@ -246,11 +248,11 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     labelText: 'Intervalo',
                     border: OutlineInputBorder(),
                     suffixIcon: Icon(
-                      Icons.arrow_drop_down,
-                    ), // Ícone de dropdown
+                      Icons.arrow_forward_ios,
+                      size: 18,
+                    ),
                   ),
                   onTap: () async {
-                    // Ao tocar, abre a SelectionScreen
                     final selectedValue = await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -265,7 +267,7 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     if (selectedValue != null) {
                       setState(() {
                         _selectedCountMethod = selectedValue;
-                        if (!_formChanged) _formChanged = true;
+                        _formChanged = true; // Marca como alterado
                       });
                     }
                   },
@@ -276,14 +278,15 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     return null;
                   },
                 ),
+                const SizedBox(height: 16),
                 if (_selectedCountMethod == 'weekly' ||
                     _selectedCountMethod == 'monthly')
-                  TextFormField(
+                  QuantityInput(
                     controller: _targetDaysPerWeekController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Dias Alvo por Período (ex: 4 de 7)',
-                    ),
+                    labelText: 'Dias Alvo por Período (ex: 4)',
+                    onChanged: (value) {
+                       if (!_formChanged) setState(() => _formChanged = true);
+                    },
                     validator: (value) {
                       if ((_selectedCountMethod == 'weekly' ||
                               _selectedCountMethod == 'monthly') &&
@@ -297,13 +300,10 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                       }
                       return null;
                     },
-                    onChanged: (value) {
-                      if (!_formChanged) setState(() => _formChanged = true);
-                    },
                   ),
-                // NOVO: TextFormField para "Tipo" (abrirá uma tela de seleção)
+                const SizedBox(height: 16),
                 TextFormField(
-                  readOnly: true, // Impede a digitação direta
+                  readOnly: true,
                   controller: TextEditingController(
                     text:
                         _selectedCompletionMethod != null
@@ -314,11 +314,11 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     labelText: 'Tipo',
                     border: OutlineInputBorder(),
                     suffixIcon: Icon(
-                      Icons.arrow_drop_down,
-                    ), // Ícone de dropdown
+                      Icons.arrow_forward_ios,
+                      size: 18,
+                    ),
                   ),
                   onTap: () async {
-                    // Ao tocar, abre a SelectionScreen
                     final selectedValue = await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -333,7 +333,7 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     if (selectedValue != null) {
                       setState(() {
                         _selectedCompletionMethod = selectedValue;
-                        if (!_formChanged) _formChanged = true;
+                        _formChanged = true; // Marca como alterado
                       });
                     }
                   },
@@ -344,10 +344,9 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     return null;
                   },
                 ),
-                // NOVO: Campo de Quantidade Alvo (com contador) - só aparece se o tipo NÃO for 'none'
-                if (_selectedCompletionMethod != 'none')
+                const SizedBox(height: 16),
+                if (_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes')
                   QuantityInput(
-                    // << NOVO WIDGET para o contador
                     controller: _targetQuantityController,
                     labelText:
                         _selectedCompletionMethod == 'quantity'
@@ -356,110 +355,152 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
                     onChanged: (value) {
                       if (!_formChanged) setState(() => _formChanged = true);
                     },
+                     validator: (value) {
+                      if ((_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes') &&
+                          (value == null || value.isEmpty)) {
+                        return 'Este campo é obrigatório para este tipo de completude.';
+                      }
+                      if (value != null &&
+                          value.isNotEmpty &&
+                          int.tryParse(value) == null) {
+                        return 'Por favor, insira um número válido.';
+                      }
+                      return null;
+                    },
                   ),
                 const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: _submitHabit,
-                  child: Text(buttonText),
-                ),
               ],
             ),
           ),
         ),
-        floatingActionButton: null,
+        persistentFooterButtons: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: ElevatedButton(
+              onPressed: _submitHabit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12.0),
+                textStyle: const TextStyle(fontSize: 16),
+              ),
+              child: Text(buttonText),
+            ),
+          )
+        ],
       ),
     );
   }
 }
 
-// NOVO WIDGET: Para o campo de quantidade com botões de + e -
 class QuantityInput extends StatelessWidget {
   final TextEditingController controller;
   final String labelText;
   final ValueChanged<String> onChanged;
-  final FormFieldValidator<String>? validator; // Adicionado validator
+  final FormFieldValidator<String>? validator;
 
   const QuantityInput({
     super.key,
     required this.controller,
     required this.labelText,
     required this.onChanged,
-    this.validator, // Adicionado validator
+    this.validator,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end, // Alinha na base
-        children: [
-          Expanded(
-            child: TextFormField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-              ], // Apenas números
-              decoration: InputDecoration(
-                labelText: labelText,
-                border: const OutlineInputBorder(),
+    // Usar IntrinsicHeight para que a Row tente fazer seus filhos terem a mesma altura.
+    return IntrinsicHeight(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8.0),
+        child: Row(
+          // CrossAxisAlignment.stretch fará com que os filhos da Row (TextFormField e o Container dos botões)
+          // se estiquem verticalmente para preencher a altura determinada pelo IntrinsicHeight.
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                ],
+                decoration: InputDecoration(
+                  labelText: labelText,
+                  border: const OutlineInputBorder(),
+                  // O contentPadding pode ser ajustado se necessário, mas o padrão
+                  // geralmente funciona bem com CrossAxisAlignment.stretch.
+                ),
+                validator: validator,
+                onChanged: onChanged,
+                // textAlignVertical: TextAlignVertical.center, // Pode ajudar a centralizar o texto se a altura for maior.
               ),
-              validator: validator, // Usa o validator passado
-              onChanged: onChanged,
             ),
-          ),
-          const SizedBox(width: 5), // Espaço menor entre o campo e os botões
-          Container(
-            // Container para agrupar os botões horizontalmente
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey),
-              borderRadius: BorderRadius.circular(5.0),
+            const SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade400),
+                // O raio da borda do TextFormField padrão é 4.0
+                borderRadius: BorderRadius.circular(4.0),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min, // A Row dos botões só ocupa o espaço necessário horizontalmente.
+                children: [
+                  // Usar um SizedBox para dar uma largura mínima e permitir que o IconButton preencha.
+                  SizedBox(
+                    width: 48, // Largura para o botão de diminuir
+                    child: TextButton( // Alterado para TextButton para melhor controle de preenchimento e splash
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: const RoundedRectangleBorder( // Para remover o arredondamento extra do TextButton em si
+                          borderRadius: BorderRadius.only(
+                            topLeft: Radius.circular(3.0), // Ajustar para alinhar com o raio do container
+                            bottomLeft: Radius.circular(3.0),
+                          )
+                        ),
+                      ),
+                      onPressed: () {
+                        int currentValue = int.tryParse(controller.text) ?? 0;
+                        if (currentValue > 0) {
+                          controller.text = (currentValue - 1).toString();
+                          onChanged(controller.text);
+                        }
+                      },
+                      child: const Icon(Icons.remove, size: 20),
+                    ),
+                  ),
+                  // Divisor vertical
+                  Container(
+                    width: 1,
+                    // A cor do divisor se estenderá devido ao CrossAxisAlignment.stretch do Row pai.
+                    color: Colors.grey.shade300,
+                  ),
+                  SizedBox(
+                    width: 48, // Largura para o botão de aumentar
+                    child: TextButton( // Alterado para TextButton
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                          shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.only(
+                            topRight: Radius.circular(3.0),
+                            bottomRight: Radius.circular(3.0),
+                          )
+                        ),
+                      ),
+                      onPressed: () {
+                        int currentValue = int.tryParse(controller.text) ?? 0;
+                        controller.text = (currentValue + 1).toString();
+                        onChanged(controller.text);
+                      },
+                      child: const Icon(Icons.add, size: 20),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            child: Row(
-              mainAxisSize:
-                  MainAxisSize.min, // Ocupa o mínimo de espaço horizontal
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.remove), // Ícone de menos
-                  onPressed: () {
-                    int currentValue = int.tryParse(controller.text) ?? 0;
-                    if (currentValue > 0) {
-                      controller.text = (currentValue - 1).toString();
-                      onChanged(controller.text); // Notifica a alteração
-                    }
-                  },
-                  padding:
-                      EdgeInsets.zero, // Remove padding extra do IconButton
-                  constraints: BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
-                  ), // Define um tamanho fixo
-                ),
-                Container(
-                  // Divisor entre os botões (opcional)
-                  height: 40,
-                  width: 1,
-                  color: Colors.grey,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add), // Ícone de mais
-                  onPressed: () {
-                    int currentValue = int.tryParse(controller.text) ?? 0;
-                    controller.text = (currentValue + 1).toString();
-                    onChanged(controller.text); // Notifica a alteração
-                  },
-                  padding:
-                      EdgeInsets.zero, // Remove padding extra do IconButton
-                  constraints: BoxConstraints.tightFor(
-                    width: 40,
-                    height: 40,
-                  ), // Define um tamanho fixo
-                ),
-              ],
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
