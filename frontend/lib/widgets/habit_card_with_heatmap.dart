@@ -132,6 +132,7 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                 child: const Text('Cancelar'),
               ),
               TextButton(
+                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
                 onPressed: () => Navigator.of(context).pop(true),
                 child: const Text('Excluir'),
               ),
@@ -157,6 +158,58 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
           SnackBar(content: Text('Erro de conexão ao excluir: $e')),
         );
       }
+    }
+  }
+
+  // NOVA FUNÇÃO ADICIONADA
+  Future<void> _undoTodayRecord(int habitId) async {
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Limpar Registro de Hoje?'),
+        content: const Text(
+            'Tem certeza que deseja limpar o progresso registrado hoje para este hábito?'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Limpar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final String apiUrl = '$_baseUrl/habit_records/today?habit_id=$habitId';
+    try {
+      final response = await http.delete(Uri.parse(apiUrl));
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  jsonDecode(response.body)['message'] ?? 'Registro de hoje limpo com sucesso!')),
+        );
+        if (mounted) {
+          widget.onHabitModified(); // Notifica para recarregar
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Erro ao limpar registro: ${errorData['error'] ?? response.body}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro de conexão ao limpar registro: $e')),
+      );
     }
   }
 
@@ -187,7 +240,42 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
 
   @override
   Widget build(BuildContext context) {
-    bool isCheckButtonDisabled = widget.habit.isCompletedToday;
+    // bool isCheckButtonDisabled = widget.habit.isCompletedToday; // Linha original removida/modificada
+
+    // Lógica para determinar se o botão principal está desabilitado para TAP
+    bool disableMainButtonTap;
+    if (widget.habit.completionMethod == 'boolean') {
+      disableMainButtonTap = widget.habit.isCompletedToday;
+    } else { // 'quantity' ou 'minutes'
+      disableMainButtonTap = false; // Sempre permite TAP para adicionar mais
+    }
+
+    // Lógica para aparência visual de "completo"
+    bool isConsideredVisuallyComplete = widget.habit.isCompletedToday;
+    IconData mainButtonIcon = Icons.check_rounded;
+
+    if (widget.habit.completionMethod == 'quantity' || widget.habit.completionMethod == 'minutes') {
+      final bool targetExists = widget.habit.targetQuantity != null && widget.habit.targetQuantity! > 0;
+      final bool hasProgress = widget.habit.currentPeriodQuantity != null && widget.habit.currentPeriodQuantity! > 0;
+
+      if (targetExists) { // Se existe uma meta
+          isConsideredVisuallyComplete = (widget.habit.currentPeriodQuantity ?? 0) >= widget.habit.targetQuantity!;
+          if (hasProgress && !isConsideredVisuallyComplete) {
+            mainButtonIcon = Icons.add_circle_outline; // Meta não atingida, mas tem progresso
+          } else if (!hasProgress) {
+            mainButtonIcon = Icons.check_rounded; // Sem progresso ainda, ícone de check
+          } else {
+            mainButtonIcon = Icons.check_rounded; // Meta atingida
+          }
+      } else if (hasProgress) { // Sem meta, mas com progresso
+          isConsideredVisuallyComplete = true; // Considera visualmente completo
+          mainButtonIcon = Icons.check_rounded;
+      } else { // Sem meta e sem progresso
+          isConsideredVisuallyComplete = false;
+          mainButtonIcon = Icons.check_rounded;
+      }
+    }
+
 
     // Heatmap colors - manter os tons de verde para o heatmap
     Color githubLightGreen = Colors.green.shade200;
@@ -351,7 +439,6 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                   ] else ...[
                     _buildTargetText(widget.habit),
                     const SizedBox(height: 4),
-                    // Os Text de Progresso e Streak que existiam antes quando showProgressBar era false
                     if (widget.habit.completionMethod == 'quantity' ||
                         widget.habit.completionMethod == 'minutes')
                       Text(
@@ -359,7 +446,7 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                         style: TextStyle(
                           fontSize: 14,
                           color: Theme.of(context).colorScheme.onSurfaceVariant
-                              .withOpacity(0.8), // Cor do texto do progresso
+                              .withOpacity(0.8),
                         ),
                       )
                     else if (widget.habit.countMethod == 'weekly' ||
@@ -369,7 +456,7 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                         style: TextStyle(
                           fontSize: 14,
                           color: Theme.of(context).colorScheme.onSurfaceVariant
-                              .withOpacity(0.8), // Cor do texto do progresso
+                              .withOpacity(0.8),
                         ),
                       )
                     else
@@ -402,7 +489,7 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                     ? Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Text(
-                        'Erro ao carregar heatmap: $_heatmapErrorMessage',
+                        _heatmapErrorMessage!, // MODIFICADO: _heatmapErrorMessage já é o erro
                         style: TextStyle(
                           color:
                               Theme.of(
@@ -470,7 +557,7 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                         scrollable: true, // Agora é scrollable
                         showText: false,
                         showColorTip:
-                            false, // Manter falso, mas podemos considerar para uma futura melhoria
+                            false,
                         onClick: (date) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
@@ -490,19 +577,19 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
               right: 1,
               child: Material(
                 color:
-                    isCheckButtonDisabled
+                    isConsideredVisuallyComplete //MODIFICADO
                         ? Theme.of(context)
                             .colorScheme
-                            .surfaceContainerHighest // Cinza mais claro para desabilitado
+                            .surfaceContainerHighest
                         : Theme.of(context)
                             .colorScheme
-                            .primaryContainer, // Cor do tema para o botão
+                            .primaryContainer,
                 borderRadius: BorderRadius.circular(12.0),
-                elevation: isCheckButtonDisabled ? 0 : 2,
+                elevation: disableMainButtonTap ? 0 : 2, //MODIFICADO
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12.0),
                   onTap:
-                      isCheckButtonDisabled
+                      disableMainButtonTap //MODIFICADO
                           ? null
                           : () => widget.onCheckButtonPressed(widget.habit),
                   child: Container(
@@ -510,16 +597,16 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                     height: 55,
                     alignment: Alignment.center,
                     child: Icon(
-                      Icons.check_rounded,
+                      mainButtonIcon, //MODIFICADO
                       size: 26.0,
                       color:
-                          isCheckButtonDisabled
+                          isConsideredVisuallyComplete //MODIFICADO
                               ? Theme.of(context)
                                   .colorScheme
-                                  .onSurfaceVariant // Cor do ícone desabilitado
+                                  .onSurfaceVariant
                               : Theme.of(context)
                                   .colorScheme
-                                  .onPrimaryContainer, // Cor do ícone habilitado
+                                  .onPrimaryContainer,
                     ),
                   ),
                 ),
@@ -560,6 +647,8 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                                 HabitHeatmapScreen(habit: widget.habit),
                       ),
                     );
+                  } else if (value == 'undo_today') { // NOVO CASO
+                    _undoTodayRecord(widget.habit.id);
                   }
                 },
                 itemBuilder:
@@ -568,16 +657,19 @@ class _HabitCardWithHeatmapState extends State<HabitCardWithHeatmap> {
                         value: 'edit',
                         child: Text('Editar'),
                       ),
-                      const PopupMenuItem<String>(
-                        value: 'delete',
-                        child: Text('Excluir'),
-                      ),
-                      if (!widget
-                          .showDetails) // Mostra "Ver Progresso Detalhado" apenas na aba de progresso
+                      if (!widget.showDetails) // Mostra "Ver Progresso Detalhado" apenas na aba de progresso
                         const PopupMenuItem<String>(
                           value: 'view_heatmap',
                           child: Text('Ver Progresso Detalhado'),
                         ),
+                      const PopupMenuItem<String>( //NOVA OPÇÃO
+                        value: 'undo_today',
+                        child: Text('Limpar registro de hoje'),
+                      ),
+                      const PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Text('Excluir'),
+                      ),
                     ],
               ),
             ),

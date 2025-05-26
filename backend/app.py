@@ -165,14 +165,14 @@ def get_habits():
         # Adiciona o JOIN e o WHERE para filtrar por categoria apenas se filter_category_id for fornecido
         # E garante que a query principal não tenha um WHERE antes disso que possa causar conflito.
         # Se filter_category_id for o único critério de filtro principal na tabela 'h', esta abordagem é correta.
+        # A query atual com JOIN + WHERE retornaria hábitos que correspondem à categoria.
+        # Vamos manter o filtro no backend como está.
         if filter_category_id:
             # Modifica a query para buscar apenas hábitos que tenham a categoria especificada
             # Precisamos garantir que 'h' seja o alias correto e que o JOIN não duplique hábitos
             # se um hábito puder estar em múltiplas categorias (o que não é o caso aqui se filtrarmos por UMA categoria_id)
             # No entanto, para retornar TODOS os hábitos e depois filtrar no frontend, não adicionamos o JOIN aqui.
             # Se o objetivo é filtrar NO BACKEND, a query precisa ser ajustada.
-            # A query atual com JOIN + WHERE retornaria hábitos que correspondem à categoria.
-            # Vamos manter o filtro no backend como está.
             base_query += """
                 JOIN habit_categories hc ON h.id = hc.habit_id
                 WHERE hc.category_id = %s
@@ -396,6 +396,61 @@ def add_habit_record():  # <<<<<<< ESTA É A FUNÇÃO QUE VOCÊ PRECISA MUDAR
         mysql.connection.rollback()
         # Removendo a checagem genérica de "Duplicate entry"
         return jsonify({"error": str(e)}), 500
+
+
+# NOVA ROTA ADICIONADA
+@app.route("/habit_records/today", methods=["DELETE"])
+def delete_habit_record_today():
+    habit_id = request.args.get("habit_id", type=int)
+    # Usa a data atual do servidor para o registro
+    record_date_str = datetime.date.today().isoformat()
+
+    if not habit_id:
+        return jsonify({"error": "habit_id is required as a query parameter."}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        # Opcional: Verificar se o hábito existe
+        cursor.execute("SELECT id FROM habits WHERE id = %s", (habit_id,))
+        if not cursor.fetchone():
+            cursor.close()
+            return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
+
+        # Deletar o registro para o hábito e a data de hoje
+        result = cursor.execute(
+            "DELETE FROM habit_records WHERE habit_id = %s AND record_date = %s",
+            (habit_id, record_date_str),
+        )
+        mysql.connection.commit()
+        cursor.close()
+
+        if result > 0:
+            print(
+                f"LOG: Registro de hoje para o hábito {habit_id} deletado com sucesso."
+            )
+            return jsonify(
+                {
+                    "message": f"Habit record for habit {habit_id} on {record_date_str} deleted successfully."
+                }
+            ), 200
+        else:
+            print(
+                f"LOG: Nenhum registro encontrado para o hábito {habit_id} hoje ({record_date_str}) para deletar."
+            )
+            return jsonify(
+                {
+                    "message": f"No habit record found for habit {habit_id} on {record_date_str} to delete."
+                }
+            ), 200  # Retorna 200 mesmo se nada foi deletado
+    except Exception as e:
+        print(
+            f"LOG: Erro ao deletar registro de hábito para hoje (hábito ID: {habit_id}): {e}"
+        )
+        traceback.print_exc()
+        mysql.connection.rollback()
+        return jsonify(
+            {"error": "Failed to delete habit record for today.", "details": str(e)}
+        ), 500
 
 
 # Adicione esta nova rota ao seu app.py (da parte anterior para o heatmap)

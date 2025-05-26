@@ -127,6 +127,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hábito já registrado para hoje!')),
         );
+         _refreshDataAfterModification(); // Atualiza mesmo em caso de 409 para refletir o estado do backend
       } else {
         final errorData = jsonDecode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -166,10 +167,12 @@ class _HabitListScreenState extends State<HabitListScreen> {
                               : 'Minutos realizados',
                     ),
                     validator: (value) {
-                      if (value == null || value.isEmpty)
+                      if (value == null || value.isEmpty) {
                         return 'Por favor, insira um valor';
-                      if (int.tryParse(value) == null)
-                        return 'Por favor, insira um número válido';
+                      }
+                      if (int.tryParse(value) == null || int.parse(value) <= 0) {
+                        return 'Por favor, insira um número positivo válido';
+                      }
                       return null;
                     },
                   ),
@@ -217,6 +220,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                 child: const Text('Cancelar'),
               ),
               TextButton(
+                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
                 onPressed: () => Navigator.of(context).pop(true),
                 child: const Text('Excluir'),
               ),
@@ -243,6 +247,57 @@ class _HabitListScreenState extends State<HabitListScreen> {
       }
     }
   }
+
+  // NOVA FUNÇÃO ADICIONADA
+  Future<void> _undoTodayRecord(int habitId) async {
+    bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Limpar Registro de Hoje?'),
+        content: const Text(
+            'Tem certeza que deseja limpar o progresso registrado hoje para este hábito?'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Limpar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final String apiUrl = '$_baseUrl/habit_records/today?habit_id=$habitId';
+    try {
+      final response = await http.delete(Uri.parse(apiUrl));
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(
+                  jsonDecode(response.body)['message'] ?? 'Registro de hoje limpo com sucesso!')),
+        );
+        _refreshDataAfterModification();
+      } else {
+        final errorData = jsonDecode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Erro ao limpar registro: ${errorData['error'] ?? response.body}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro de conexão ao limpar registro: $e')),
+      );
+    }
+  }
+
 
   Widget _buildTargetText(Habit habit) {
     if (habit.targetQuantity != null) {
@@ -432,7 +487,41 @@ class _HabitListScreenState extends State<HabitListScreen> {
                     itemCount: habits.length,
                     itemBuilder: (context, index) {
                       Habit habit = habits[index];
-                      bool isCheckButtonDisabled = habit.isCompletedToday;
+
+                      // Lógica para determinar se o botão principal está desabilitado para TAP
+                      bool disableMainButtonTap;
+                      if (habit.completionMethod == 'boolean') {
+                        disableMainButtonTap = habit.isCompletedToday;
+                      } else { // 'quantity' ou 'minutes'
+                        disableMainButtonTap = false; // Sempre permite TAP para adicionar mais
+                      }
+
+                      // Lógica para aparência visual de "completo"
+                      bool isConsideredVisuallyComplete = habit.isCompletedToday;
+                      IconData mainButtonIcon = Icons.check_rounded;
+
+                      if (habit.completionMethod == 'quantity' || habit.completionMethod == 'minutes') {
+                        final bool targetExists = habit.targetQuantity != null && habit.targetQuantity! > 0;
+                        final bool hasProgress = habit.currentPeriodQuantity != null && habit.currentPeriodQuantity! > 0;
+
+                        if (targetExists) { // Se existe uma meta
+                           isConsideredVisuallyComplete = (habit.currentPeriodQuantity ?? 0) >= habit.targetQuantity!;
+                           if (hasProgress && !isConsideredVisuallyComplete) {
+                             mainButtonIcon = Icons.add_circle_outline; // Meta não atingida, mas tem progresso
+                           } else if (!hasProgress) {
+                             mainButtonIcon = Icons.check_rounded; // Sem progresso ainda, ícone de check
+                           } else {
+                             mainButtonIcon = Icons.check_rounded; // Meta atingida
+                           }
+                        } else if (hasProgress) { // Sem meta, mas com progresso
+                           isConsideredVisuallyComplete = true; // Considera visualmente completo
+                           mainButtonIcon = Icons.check_rounded;
+                        } else { // Sem meta e sem progresso
+                           isConsideredVisuallyComplete = false;
+                           mainButtonIcon = Icons.check_rounded;
+                        }
+                      }
+
 
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 6.0),
@@ -511,7 +600,6 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                               .toList(),
                                     ),
                                   const SizedBox(height: 8),
-                                  // --- Lógica de progresso para HabitListScreen (igual a HabitCardWithHeatmap) ---
                                   _buildTargetText(habit),
                                   const SizedBox(height: 4),
                                   if (habit.completionMethod == 'quantity' ||
@@ -552,7 +640,6 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 10),
-                                  // --- Fim da lógica de progresso ---
                                 ],
                               ),
                               Positioned(
@@ -560,42 +647,41 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                 right: 1,
                                 child: Material(
                                   color:
-                                      isCheckButtonDisabled
+                                      isConsideredVisuallyComplete
                                           ? Theme.of(
                                             context,
-                                          ).colorScheme.surfaceContainerHighest
+                                          ).colorScheme.surfaceContainerHighest // Cor de "completo" ou "meta atingida"
                                           : Theme.of(
                                             context,
-                                          ).colorScheme.primaryContainer,
+                                          ).colorScheme.primaryContainer, // Cor "ativo para registrar/adicionar"
                                   borderRadius: BorderRadius.circular(12.0),
-                                  elevation: isCheckButtonDisabled ? 0 : 2,
+                                  elevation: disableMainButtonTap ? 0 : 2, //MODIFICADO
                                   child: InkWell(
                                     borderRadius: BorderRadius.circular(12.0),
-                                    onTap:
-                                        isCheckButtonDisabled
-                                            ? null
-                                            : () {
-                                              if (habit.completionMethod ==
-                                                      'quantity' ||
-                                                  habit.completionMethod ==
-                                                      'minutes') {
-                                                _showQuantityDialog(habit);
-                                              } else {
-                                                _recordHabitCompletion(
-                                                  habit.id,
-                                                  habit.completionMethod,
-                                                );
-                                              }
-                                            },
+                                    onTap: disableMainButtonTap //MODIFICADO
+                                        ? null
+                                        : () {
+                                          if (habit.completionMethod ==
+                                                  'quantity' ||
+                                              habit.completionMethod ==
+                                                  'minutes') {
+                                            _showQuantityDialog(habit);
+                                          } else {
+                                            _recordHabitCompletion(
+                                              habit.id,
+                                              habit.completionMethod,
+                                            );
+                                          }
+                                        },
                                     child: Container(
                                       width: 55,
                                       height: 55,
                                       alignment: Alignment.center,
                                       child: Icon(
-                                        Icons.check_rounded,
+                                        mainButtonIcon, //MODIFICADO
                                         size: 26.0,
                                         color:
-                                            isCheckButtonDisabled
+                                            isConsideredVisuallyComplete
                                                 ? Theme.of(
                                                   context,
                                                 ).colorScheme.onSurfaceVariant
@@ -636,6 +722,8 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                       });
                                     } else if (value == 'delete') {
                                       _deleteHabit(habit.id);
+                                    } else if (value == 'undo_today') { //NOVO CASO
+                                      _undoTodayRecord(habit.id);
                                     }
                                   },
                                   itemBuilder:
@@ -644,6 +732,10 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                             const PopupMenuItem<String>(
                                               value: 'edit',
                                               child: Text('Editar'),
+                                            ),
+                                            const PopupMenuItem<String>( //NOVA OPÇÃO
+                                              value: 'undo_today',
+                                              child: Text('Limpar registro de hoje'),
                                             ),
                                             const PopupMenuItem<String>(
                                               value: 'delete',
