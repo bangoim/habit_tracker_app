@@ -1,14 +1,14 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:frontend/screens/habit_list_screen.dart';
-import 'package:frontend/models/habit.dart';
-import 'package:frontend/models/category_model.dart';
-// Certifique-se que esta tela existe no seu projeto e está importada corretamente
-// se os campos "Intervalo" e "Tipo" ainda a utilizam.
-import 'package:frontend/screens/selection_screen.dart';
+import 'package:http/http.dart'
+    as http; // Necessário para OverallProgressScreen
+import 'dart:convert'; // Necessário para OverallProgressScreen
+import 'package:flutter_heatmap_calendar/flutter_heatmap_calendar.dart'; // Necessário para OverallProgressScreen
+
+// Importe as telas para as abas
+import 'package:frontend/screens/habit_list_screen.dart'; // Aba 1: Meus Hábitos (apenas lista e edição)
+import 'package:frontend/screens/habit_progress_list_screen.dart'; // NOVO: Aba 2: Progresso dos Hábitos (com heatmaps individuais)
+import 'package:frontend/screens/habit_form_screen.dart'; // Importe HabitFormScreen para o FAB
 
 void main() {
   runApp(const MyApp());
@@ -21,512 +21,412 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Habit Tracker',
-      theme: ThemeData(primarySwatch: Colors.deepPurple, useMaterial3: true),
-      home: const HabitListScreen(),
+      theme: ThemeData(
+        // Removendo primarySwatch e usando ColorScheme.fromSeed para Material 3
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.teal, // Changed to Teal for a more vibrant base
+          brightness: Brightness.light, // Explicitly set to light mode
+        ),
+        useMaterial3: true,
+        // Configurações globais para AppBar
+        appBarTheme: AppBarTheme(
+          backgroundColor:
+              Colors.teal.shade400, // Matching AppBar with seed color
+          foregroundColor: Colors.white, // White text and icons on AppBar
+          elevation: 0, // Sem sombra na AppBar
+          centerTitle: true, // Centraliza o título
+        ),
+      ),
+      home: const MainScreen(),
     );
   }
 }
 
-class HabitFormScreen extends StatefulWidget {
-  final Habit? habit;
-
-  const HabitFormScreen({super.key, this.habit});
+// Classe OverallProgressScreen (mantida e movida implicitamente para cá para simplificar)
+// para o heatmap geral, será acessada da MainScreen como uma das abas.
+class OverallProgressScreen extends StatefulWidget {
+  const OverallProgressScreen({super.key});
 
   @override
-  _HabitFormScreenState createState() => _HabitFormScreenState();
+  State<OverallProgressScreen> createState() => _OverallProgressScreenState();
 }
 
-class _HabitFormScreenState extends State<HabitFormScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _descriptionController = TextEditingController();
-  final TextEditingController _targetQuantityController = TextEditingController();
-  final TextEditingController _targetDaysPerWeekController = TextEditingController();
-
-  String? _selectedCountMethod;
-  String? _selectedCompletionMethod;
-  List<CategoryModel> _availableCategories = [];
-  List<CategoryModel> _selectedCategories = [];
-
-  bool _formChanged = false;
-  bool _isLoadingCategories = true;
-
-  final String _baseUrl = 'http://10.0.2.2:5000';
-
-  final Map<String, String> _intervalDisplayNames = {
-    'daily': 'Diário',
-    'weekly': 'Semanal',
-    'monthly': 'Mensal',
-  };
-
-  final Map<String, String> _completionTypeDisplayNames = {
-    'quantity': 'Quantidade',
-    'minutes': 'Minutos',
-  };
+class _OverallProgressScreenState extends State<OverallProgressScreen> {
+  final String _baseUrl =
+      'http://10.0.2.2:5000'; // Ajuste este IP se necessário
+  Map<DateTime, int> _overallDatasets = {}; // Dataset para o heatmap geral
+  bool _isLoadingOverallProgress = true;
+  String? _overallErrorMessage;
 
   @override
   void initState() {
     super.initState();
-    _fetchAvailableCategories();
-
-    if (widget.habit != null) {
-      _nameController.text = widget.habit!.name;
-      _descriptionController.text = widget.habit!.description ?? '';
-      _selectedCountMethod = widget.habit!.countMethod;
-      _selectedCompletionMethod = widget.habit!.completionMethod;
-      _targetQuantityController.text = (widget.habit!.targetQuantity ?? '').toString();
-      _targetDaysPerWeekController.text = (widget.habit!.targetDaysPerWeek ?? '').toString();
-      // _selectedCategories será populado por _fetchAvailableCategories
-    }
+    _fetchOverallProgressData();
   }
 
-  Future<void> _fetchAvailableCategories() async {
-    setState(() => _isLoadingCategories = true);
+  Future<void> _fetchOverallProgressData() async {
+    setState(() {
+      _isLoadingOverallProgress = true;
+      _overallErrorMessage = null;
+    });
+
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/categories'));
+      final DateTime today = DateTime.now();
+      // Limite do heatmap para os últimos 12 meses (1 ano) para a visão geral
+      final DateTime oneYearAgo = DateTime(
+        today.year - 1,
+        today.month,
+        today.day,
+      );
+
+      final String apiUrl =
+          '$_baseUrl/all_habit_records?' +
+          'start_date=${oneYearAgo.toIso8601String().split('T')[0]}&' +
+          'end_date=${today.toIso8601String().split('T')[0]}';
+
+      final response = await http.get(Uri.parse(apiUrl));
+
       if (response.statusCode == 200) {
-        List<dynamic> fetchedCategoriesJson = jsonDecode(response.body);
+        List<dynamic> jsonList = jsonDecode(response.body);
+        Map<DateTime, int> aggregatedDatasets = {};
+
+        // Agregando os dados de todos os hábitos por dia
+        for (var json in jsonList) {
+          // Note: HabitRecord e Habit não são diretamente usados aqui, mas os imports ainda são necessários
+          // para o contexto geral do projeto.
+          DateTime recordDate = DateTime.parse(json['record_date'] as String);
+          DateTime normalizedDate = DateTime(
+            recordDate.year,
+            recordDate.month,
+            recordDate.day,
+          );
+          int quantity =
+              json['quantity_completed'] as int? ??
+              1; // 1 para booleanos, ou a quantidade
+
+          aggregatedDatasets[normalizedDate] =
+              (aggregatedDatasets[normalizedDate] ?? 0) + quantity;
+        }
+
         if (mounted) {
           setState(() {
-            _availableCategories = fetchedCategoriesJson
-                .map((json) => CategoryModel.fromJson(json))
-                .toList();
-            if (widget.habit != null && widget.habit!.categories.isNotEmpty) {
-              _selectedCategories = widget.habit!.categories
-                  .map((habitCat) => _availableCategories.firstWhere(
-                        (availCat) => availCat.id == habitCat.id,
-                        orElse: () => habitCat,
-                      ))
-                  .toList();
-            }
-            _isLoadingCategories = false;
+            _overallDatasets = aggregatedDatasets;
+            _isLoadingOverallProgress = false;
           });
         }
       } else {
-        if (mounted) setState(() => _isLoadingCategories = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Falha ao carregar categorias: ${response.statusCode}')),
-        );
+        if (mounted) {
+          setState(() {
+            _overallErrorMessage =
+                'Falha ao carregar progresso geral: ${response.statusCode} - ${response.body}';
+            _isLoadingOverallProgress = false;
+          });
+        }
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoadingCategories = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao carregar categorias: $e')),
-      );
-    }
-  }
-
-  Future<void> _submitHabit() async {
-    // Validação simples para categorias, se necessário
-    // (pode ser melhorado com um FormField customizado)
-    if (_selectedCategories.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-           const SnackBar(content: Text('Por favor, selecione ao menos uma categoria.')),
-        );
-        // Marcar _formChanged é importante para o WillPopScope se o usuário tentar sair
-        if (!_formChanged) setState(() => _formChanged = true);
-        return; // Impede a submissão se nenhuma categoria for selecionada
-    }
-
-    if (!_formKey.currentState!.validate()) {
-      // Marcar _formChanged é importante para o WillPopScope se o usuário tentar sair
-      if (!_formChanged) setState(() => _formChanged = true);
-      return;
-    }
-
-
-    final bool isEditing = widget.habit != null;
-    String apiUrl = '$_baseUrl/habits';
-    String successMessage = 'Hábito adicionado com sucesso!';
-    String errorMessage = 'Erro ao adicionar hábito:';
-
-    if (isEditing) {
-      apiUrl = '$_baseUrl/habits/${widget.habit!.id}';
-      successMessage = 'Hábito atualizado com sucesso!';
-      errorMessage = 'Erro ao atualizar hábito:';
-    }
-
-    List<int> selectedCategoryIds = _selectedCategories.map((cat) => cat.id).toList();
-
-    try {
-      final Map<String, dynamic> bodyData = {
-        'name': _nameController.text,
-        'description': _descriptionController.text.isEmpty ? null : _descriptionController.text,
-        'count_method': _selectedCountMethod,
-        'completion_method': _selectedCompletionMethod,
-        'target_quantity': (_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes')
-            ? (_targetQuantityController.text.isEmpty ? null : int.parse(_targetQuantityController.text))
-            : null,
-        'target_days_per_week': _targetDaysPerWeekController.text.isEmpty
-            ? null
-            : int.parse(_targetDaysPerWeekController.text),
-        'category_ids': selectedCategoryIds,
-      };
-
-      final response = isEditing
-          ? await http.put(Uri.parse(apiUrl), headers: <String, String>{'Content-Type': 'application/json; charset=UTF-8'}, body: jsonEncode(bodyData))
-          : await http.post(Uri.parse(apiUrl), headers: <String, String>{'Content-Type': 'application/json; charset=UTF-8'}, body: jsonEncode(bodyData));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(successMessage)));
-        _formChanged = false;
-        Navigator.pop(context, true);
-      } else {
-        final errorData = jsonDecode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$errorMessage ${errorData['error']}')));
+      if (mounted) {
+        setState(() {
+          _overallErrorMessage =
+              'Erro de conexão ao carregar progresso geral: $e';
+          _isLoadingOverallProgress = false;
+        });
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro de conexão: $e')));
     }
-  }
-
-  void _showCategorySelectionDialog() {
-    if (_isLoadingCategories) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carregando categorias...')));
-      return;
-    }
-    if (_availableCategories.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nenhuma categoria disponível para seleção.')));
-      return;
-    }
-
-    List<CategoryModel> tempSelectedCategories = List.from(_selectedCategories);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setModalState) {
-            return Padding(
-              padding: EdgeInsets.fromLTRB(16.0, 30.0, 16.0, MediaQuery.of(context).viewInsets.bottom + 16.0), // Ajuste para teclado
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.6,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text('Selecione as Categorias', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Wrap(
-                          spacing: 8.0,
-                          runSpacing: 4.0,
-                          children: _availableCategories.map((category) {
-                            final bool isSelected = tempSelectedCategories.any((sc) => sc.id == category.id);
-                            return FilterChip(
-                              label: Text(category.name),
-                              selected: isSelected,
-                              onSelected: (bool? selected) {
-                                setModalState(() {
-                                  if (selected == true) {
-                                    if (!isSelected) tempSelectedCategories.add(category);
-                                  } else {
-                                    tempSelectedCategories.removeWhere((sc) => sc.id == category.id);
-                                  }
-                                });
-                              },
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          child: const Text('Cancelar'),
-                          onPressed: () => Navigator.of(context).pop(),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          child: const Text('OK'),
-                          onPressed: () {
-                            setState(() {
-                              _selectedCategories = List.from(tempSelectedCategories);
-                              _formChanged = true;
-                            });
-                            Navigator.of(context).pop();
-                          },
-                        ),
-                      ],
-                    )
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final String appBarTitle = widget.habit == null ? 'Cadastrar Hábito' : 'Editar Hábito';
-    final String buttonText = widget.habit == null ? 'Adicionar Hábito' : 'Salvar Alterações';
-    final bool isEditing = widget.habit != null;
+    // Cores para o heatmap (reutilizadas da HabitHeatmapScreen)
+    // Manteremos essas cores do heatmap, pois elas se referem à intensidade e são independentes do tema principal
+    Color githubLightGreen = Colors.green.shade200;
+    Color githubMediumGreen = Colors.green.shade500;
+    Color githubDarkGreen = Colors.green.shade800;
+    Color githubVeryDarkGreen = Colors.green.shade900;
+    Color defaultDayColor =
+        Colors
+            .grey
+            .shade300; // Alterado para um cinza mais claro para combinar com o tema claro
 
-    return WillPopScope(
-      onWillPop: () async {
-        if (_formChanged) {
-          return await showDialog<bool>(
-                context: context,
-                builder: (BuildContext context) {
-                  return AlertDialog(
-                    title: const Text('Descartar alterações?'),
-                    content: const Text('Você tem alterações não salvas. Deseja sair e perdê-las?'),
-                    actions: <Widget>[
-                      TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')),
-                      TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim')),
+    final DateTime heatmapStartDate = DateTime(
+      DateTime.now().year - 1,
+      DateTime.now().month, // Mês atual do ano anterior
+      DateTime.now().day,
+    );
+    final DateTime heatmapEndDate = DateTime.now();
+
+    return Scaffold(
+      backgroundColor:
+          Theme.of(
+            context,
+          ).colorScheme.surface, // Usar a cor de superfície do tema
+      appBar: AppBar(
+        title: const Text('Progresso Geral'),
+        // As cores do AppBar agora vêm do ThemeData.appBarTheme
+        actions: [
+          IconButton(
+            icon: Icon(
+              Icons.refresh,
+              color: Theme.of(context).colorScheme.onSurface,
+            ), // Cor do ícone
+            onPressed: _fetchOverallProgressData,
+          ),
+        ],
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Visão Geral',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    // Cor do texto principal agora vem do tema
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12.0),
+                  decoration: BoxDecoration(
+                    color:
+                        Theme.of(context)
+                            .colorScheme
+                            .surfaceVariant, // Usar surfaceVariant para o container
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Total de Registros',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      Text(
+                        _overallDatasets.values
+                            .fold(0, (sum, element) => sum + element)
+                            .toString(), // Soma todos os registros como um placeholder
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
                     ],
-                  );
-                },
-              ) ?? false;
-        }
-        return true;
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(appBarTitle),
-           leading: isEditing
-              ? IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: () async {
-                    if (_formChanged) {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (BuildContext context) {
-                          return AlertDialog(
-                            title: const Text('Descartar alterações?'),
-                            content: const Text('Você tem alterações não salvas. Deseja sair e perdê-las?'),
-                            actions: <Widget>[
-                              TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')),
-                              TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim')),
-                            ],
-                          );
-                        },
-                      );
-                      if (confirm == true) {
-                        Navigator.pop(context);
-                      }
-                    } else {
-                      Navigator.pop(context);
-                    }
-                  },
-                )
-              : null,
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Form(
-            key: _formKey,
-            onChanged: () { if (!_formChanged) setState(() => _formChanged = true); },
-            child: ListView(
-              children: <Widget>[
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(labelText: 'Nome do Hábito', border: OutlineInputBorder()),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) return 'Por favor, insira o nome do hábito';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                ListTile(
-                  title: const Text("Categorias"),
-                  subtitle: _isLoadingCategories
-                      ? const Text("Carregando categorias...")
-                      : Text(_selectedCategories.isEmpty
-                          ? "Nenhuma selecionada (toque para escolher)"
-                          : _selectedCategories.map((c) => c.name).join(', ')),
-                  trailing: const Icon(Icons.arrow_forward_ios, size: 18),
-                  onTap: _showCategorySelectionDialog,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4.0),
-                    side: BorderSide(color: Theme.of(context).inputDecorationTheme.border?.borderSide.color ?? Colors.grey),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
                 ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _descriptionController,
-                  decoration: const InputDecoration(labelText: 'Descrição (opcional)', border: OutlineInputBorder()),
-                  maxLines: 3,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  readOnly: true,
-                  controller: TextEditingController(text: _selectedCountMethod != null ? _intervalDisplayNames[_selectedCountMethod] : ''),
-                  decoration: const InputDecoration(labelText: 'Intervalo', border: OutlineInputBorder(), suffixIcon: Icon(Icons.arrow_forward_ios, size: 18)),
-                  onTap: () async {
-                    final selectedValue = await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => SelectionScreen(title: 'Selecionar Intervalo', options: _intervalDisplayNames, initialValue: _selectedCountMethod)),
-                    );
-                    if (selectedValue != null) {
-                      setState(() {
-                        _selectedCountMethod = selectedValue;
-                        _formChanged = true;
-                      });
-                    }
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) return 'Por favor, selecione o intervalo.';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                if (_selectedCountMethod == 'weekly' || _selectedCountMethod == 'monthly')
-                  QuantityInput(
-                    controller: _targetDaysPerWeekController,
-                    labelText: 'Dias Alvo por Período (ex: 4)',
-                    onChanged: (value) { if (!_formChanged) setState(() => _formChanged = true); },
-                    validator: (value) {
-                      if ((_selectedCountMethod == 'weekly' || _selectedCountMethod == 'monthly') && (value == null || value.isEmpty)) {
-                        return 'Este campo é obrigatório para hábitos semanais/mensais';
-                      }
-                      if (value != null && value.isNotEmpty && int.tryParse(value) == null) return 'Por favor, insira um número válido';
-                      return null;
-                    },
-                  ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  readOnly: true,
-                  controller: TextEditingController(text: _selectedCompletionMethod != null ? _completionTypeDisplayNames[_selectedCompletionMethod] : ''),
-                  decoration: const InputDecoration(labelText: 'Tipo', border: OutlineInputBorder(), suffixIcon: Icon(Icons.arrow_forward_ios, size: 18)),
-                  onTap: () async {
-                    final selectedValue = await Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => SelectionScreen(title: 'Selecionar Tipo', options: _completionTypeDisplayNames, initialValue: _selectedCompletionMethod)),
-                    );
-                    if (selectedValue != null) {
-                      setState(() {
-                        _selectedCompletionMethod = selectedValue;
-                        _formChanged = true;
-                      });
-                    }
-                  },
-                  validator: (value) {
-                    if (value == null || value.isEmpty) return 'Por favor, selecione o tipo de completude.';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                if (_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes')
-                  QuantityInput(
-                    controller: _targetQuantityController,
-                    labelText: _selectedCompletionMethod == 'quantity' ? 'Quantidade Alvo (ex: 1x, 2x)' : 'Minutos Alvo (ex: 200min)',
-                    onChanged: (value) { if (!_formChanged) setState(() => _formChanged = true); },
-                    validator: (value) {
-                      if ((_selectedCompletionMethod == 'quantity' || _selectedCompletionMethod == 'minutes') && (value == null || value.isEmpty)) {
-                        return 'Este campo é obrigatório para este tipo de completude.';
-                      }
-                      if (value != null && value.isNotEmpty && int.tryParse(value) == null) return 'Por favor, insira um número válido.';
-                      return null;
-                    },
-                  ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
               ],
             ),
           ),
-        ),
-        persistentFooterButtons: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: ElevatedButton(
-              onPressed: _submitHabit,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).primaryColor,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12.0),
-                textStyle: const TextStyle(fontSize: 16),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Text(
+              'Atividade Diária (Todos os Hábitos)',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
               ),
-              child: Text(buttonText),
             ),
-          )
+          ),
+          Expanded(
+            child:
+                _isLoadingOverallProgress
+                    ? const Center(child: CircularProgressIndicator())
+                    : _overallErrorMessage != null
+                    ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Text(
+                          _overallErrorMessage!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    )
+                    : SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      scrollDirection: Axis.horizontal,
+                      child: HeatMap(
+                        startDate: heatmapStartDate,
+                        endDate: heatmapEndDate,
+                        datasets: _overallDatasets,
+                        colorsets: {
+                          1: githubLightGreen,
+                          2: githubMediumGreen,
+                          4: githubDarkGreen,
+                          6: githubVeryDarkGreen,
+                        },
+                        defaultColor: defaultDayColor,
+                        textColor:
+                            Colors
+                                .black87, // Alterado para texto mais escuro no heatmap
+                        size: 14,
+                        margin: const EdgeInsets.all(2),
+                        borderRadius: 2,
+                        scrollable: true,
+                        showText: false,
+                        showColorTip: true,
+                        colorTipHelper: const [
+                          Text(
+                            'Nenhum',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Pouco',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Médio',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Muito',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Mais',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                        onClick: (date) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Dia: ${date.toLocal().toString().split(' ')[0]}, Atividade Total: ${_overallDatasets[date] ?? 0}',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+          ),
         ],
       ),
     );
   }
 }
 
-class QuantityInput extends StatelessWidget {
-  final TextEditingController controller;
-  final String labelText;
-  final ValueChanged<String> onChanged;
-  final FormFieldValidator<String>? validator;
+// [MODIFICADO] MainScreen para gerenciar as 2 abas e o FAB
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
 
-  const QuantityInput({
-    super.key,
-    required this.controller,
-    required this.labelText,
-    required this.onChanged,
-    this.validator,
-  });
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  int _selectedIndex = 0; // Índice da aba selecionada
+
+  // Lista de widgets para cada aba
+  static final List<Widget> _widgetOptions = <Widget>[
+    const HabitListScreen(), // Aba 1: Meus Hábitos
+    const HabitProgressListScreen(), // Aba 2: Progresso
+  ];
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return IntrinsicHeight(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly,],
-                decoration: InputDecoration(labelText: labelText, border: const OutlineInputBorder(),),
-                validator: validator,
-                onChanged: onChanged,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade400), borderRadius: BorderRadius.circular(4.0),),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 48,
-                    child: TextButton(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.only(topLeft: Radius.circular(3.0), bottomLeft: Radius.circular(3.0)))),
-                      onPressed: () {
-                        int currentValue = int.tryParse(controller.text) ?? 0;
-                        if (currentValue > 0) {
-                          controller.text = (currentValue - 1).toString();
-                          onChanged(controller.text);
-                        }
-                      },
-                      child: const Icon(Icons.remove, size: 20),
-                    ),
-                  ),
-                  Container(width: 1, color: Colors.grey.shade300,),
-                  SizedBox(
-                    width: 48,
-                    child: TextButton(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, shape: const RoundedRectangleBorder(borderRadius: BorderRadius.only(topRight: Radius.circular(3.0), bottomRight: Radius.circular(3.0)))),
-                      onPressed: () {
-                        int currentValue = int.tryParse(controller.text) ?? 0;
-                        controller.text = (currentValue + 1).toString();
-                        onChanged(controller.text);
-                      },
-                      child: const Icon(Icons.add, size: 20),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    return Scaffold(
+      body: Center(
+        child: _widgetOptions.elementAt(
+          _selectedIndex,
+        ), // Exibe a tela da aba selecionada
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        items: const <BottomNavigationBarItem>[
+          BottomNavigationBarItem(
+            icon: Icon(Icons.list_alt),
+            label: 'Meus Hábitos',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart),
+            label: 'Progresso',
+          ),
+        ],
+        currentIndex: _selectedIndex,
+        selectedItemColor:
+            Theme.of(
+              context,
+            ).colorScheme.primary, // Usar a cor primária do tema
+        onTap: _onItemTapped,
+        backgroundColor:
+            Theme.of(context)
+                .colorScheme
+                .surfaceVariant, // Usar a cor de superfície do tema para o fundo da barra
+        unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant
+            .withOpacity(0.7), // Ícones não selecionados em um tom mais escuro
+        type:
+            BottomNavigationBarType
+                .fixed, // Garante que os rótulos sempre apareçam
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const HabitFormScreen()),
+          );
+          // Opcional: Se a tela de formulário retornar 'true', recarregar a lista de hábitos
+          if (result == true && _selectedIndex == 0) {
+            // Se estiver na aba "Meus Hábitos", force o refresh
+            // Isso pode ser feito de várias formas, a mais simples é reconstruir o widget.
+            // Para um refresh mais robusto, você precisaria de um Provider ou similar.
+            setState(() {
+              // Simplesmente reconstruir a aba para forçar o FutureBuilder a recarregar
+              // Nota: Em um app maior, um State Management como Provider ou Riverpod
+              // seria mais adequado para notificar a HabitListScreen a recarregar seus dados.
+              // Para este exemplo, basta que a MainScreen se reconstrua.
+            });
+          } else if (result == true && _selectedIndex == 1) {
+            setState(() {
+              // Similarmente, reconstruir a aba de progresso se estiver nela
+            });
+          }
+        },
+        child: const Icon(Icons.add),
+        backgroundColor: Theme.of(context).colorScheme.primary, // Cor do FAB
+        foregroundColor:
+            Theme.of(context).colorScheme.onPrimary, // Cor do ícone no FAB
+        shape: RoundedRectangleBorder(
+          // Forma do FAB, exemplo como na imagem
+          borderRadius: BorderRadius.circular(
+            16.0,
+          ), // Ajuste o raio para a forma desejada
         ),
       ),
+      floatingActionButtonLocation:
+          FloatingActionButtonLocation
+              .endFloat, // Posição do FAB agora na lateral
     );
   }
 }

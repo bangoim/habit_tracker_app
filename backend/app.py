@@ -331,52 +331,172 @@ def delete_habit(habit_id):
 
 
 @app.route("/habit_records", methods=["POST"])
-def add_habit_record():
+def add_habit_record():  # <<<<<<< ESTA É A FUNÇÃO QUE VOCÊ PRECISA MUDAR
     print("LOG: Rota POST /habit_records foi chamada")
     try:
         data = request.json
         habit_id = data["habit_id"]
         record_date_str = data["record_date"]
-        quantity_completed = data.get("quantity_completed")
+        # Obtém a quantidade a ser adicionada. Se não for fornecida, assume 1 para booleanos.
+        # Se for um registro adicional, o frontend pode enviar quantity_completed.
+        quantity_to_add = data.get(
+            "quantity_completed", 1
+        )  # Assume 1 se não especificado, para booleanos
 
         if not habit_id or not record_date_str:
             return jsonify({"error": "habit_id and record_date are required."}), 400
 
-        # REMOVA dictionary=True daqui
         cursor = mysql.connection.cursor()
-        cursor.execute("SELECT id FROM habits WHERE id = %s", (habit_id,))
-        if not cursor.fetchone():
+        cursor.execute(
+            "SELECT id, completion_method FROM habits WHERE id = %s", (habit_id,)
+        )
+        habit_info = cursor.fetchone()
+        if not habit_info:
             cursor.close()
             print(f"LOG: Hábito {habit_id} não encontrado para adicionar registro.")
             return jsonify({"error": f"Habit with ID {habit_id} not found."}), 404
 
-        cursor.execute(
-            "INSERT INTO habit_records (habit_id, record_date, quantity_completed) VALUES (%s, %s, %s)",
-            (habit_id, record_date_str, quantity_completed),
-        )
+        # A chave 'UNIQUE (habit_id, record_date)' na tabela habit_records é crucial aqui.
+        # Ela permite que o INSERT...ON DUPLICATE KEY UPDATE funcione.
+        if habit_info["completion_method"] == "boolean":
+            sql = """
+                INSERT INTO habit_records (habit_id, record_date, quantity_completed)
+                VALUES (%s, %s, 1) -- Para boolean, a quantidade é sempre 1 no primeiro registro
+                ON DUPLICATE KEY UPDATE
+                    created_at = CURRENT_TIMESTAMP -- Não altera quantity_completed para boolean
+            """
+            # quantity_to_add não é usado para booleanos aqui, é sempre 1
+            params = (habit_id, record_date_str)
+        else:
+            sql = """
+                INSERT INTO habit_records (habit_id, record_date, quantity_completed)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    quantity_completed = quantity_completed + VALUES(quantity_completed),
+                    created_at = CURRENT_TIMESTAMP
+            """
+            params = (habit_id, record_date_str, quantity_to_add)
+
+        cursor.execute(sql, params)
         mysql.connection.commit()
-        record_id = cursor.lastrowid
+        record_id = (
+            cursor.lastrowid
+        )  # lastrowid pode não ser útil em ON DUPLICATE KEY UPDATE
         cursor.close()
         print(
-            f"LOG: Registro de hábito adicionado com ID: {record_id} para o hábito {habit_id}"
+            f"LOG: Registro de hábito adicionado/atualizado para o hábito {habit_id} na data {record_date_str}"
         )
+        # Retorna o registro atualizado (pode ser útil para o frontend, embora não seja estritamente necessário agora)
         return jsonify(
-            {"message": "Habit record added successfully!", "id": record_id}
+            {"message": "Habit record added/updated successfully!", "id": record_id}
         ), 201
     except Exception as e:
-        print(f"LOG: Erro ao adicionar registro de hábito: {e}")
+        print(f"LOG: Erro ao adicionar/atualizar registro de hábito: {e}")
         traceback.print_exc()
-        if (
-            "Duplicate entry"
-            in str(
-                e
-            )  # Checagem genérica, ideal seria pelo código de erro do MySQL para duplicidade
-            # and "for key 'habit_records.habit_id_record_date_unique'" in str(e).lower() # Esta parte é muito específica
-        ):
-            return jsonify(
-                {"error": "Registro para este hábito e data já existe."}
-            ), 409
         mysql.connection.rollback()
+        # Removendo a checagem genérica de "Duplicate entry"
+        return jsonify({"error": str(e)}), 500
+
+
+# Adicione esta nova rota ao seu app.py (da parte anterior para o heatmap)
+@app.route("/habits/<int:habit_id>/records", methods=["GET"])
+def get_habit_records_for_heatmap(habit_id):
+    print(f"LOG: Rota GET /habits/{habit_id}/records foi chamada")
+    try:
+        # Pega os parâmetros de query para o período (opcional)
+        start_date_str = request.args.get("start_date")
+        end_date_str = request.args.get("end_date")
+
+        cursor = mysql.connection.cursor()
+
+        query = "SELECT record_date, quantity_completed FROM habit_records WHERE habit_id = %s"
+        params = [habit_id]
+
+        if start_date_str:
+            query += " AND record_date >= %s"
+            params.append(start_date_str)
+        if end_date_str:
+            query += " AND record_date <= %s"
+            params.append(end_date_str)
+
+        query += " ORDER BY record_date ASC"
+
+        cursor.execute(query, tuple(params))
+        records = (
+            cursor.fetchall()
+        )  # Já retorna dicionários devido a MYSQL_CURSORCLASS = "DictCursor"
+        cursor.close()
+
+        # Converte datetime.date para string no formato ISO para JSON
+        formatted_records = []
+        for record in records:
+            formatted_records.append(
+                {
+                    "record_date": record["record_date"].isoformat(),
+                    "quantity_completed": record["quantity_completed"],
+                }
+            )
+
+        print(
+            f"LOG: Retornando {len(formatted_records)} registros para o hábito {habit_id}."
+        )
+        return jsonify(formatted_records), 200
+    except Exception as e:
+        print(f"LOG: Erro ao obter registros para heatmap do hábito {habit_id}: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# ... (código existente até o final do app.py, antes do if __name__ == "__main__":)
+
+
+@app.route("/all_habit_records", methods=["GET"])
+def get_all_habit_records_for_heatmap():
+    print("LOG: Rota GET /all_habit_records foi chamada")
+    try:
+        start_date_str = request.args.get("start_date")
+        end_date_str = request.args.get("end_date")
+
+        cursor = mysql.connection.cursor()
+
+        query = "SELECT habit_id, record_date, quantity_completed FROM habit_records"
+        params = []
+
+        where_clauses = []
+        if start_date_str:
+            where_clauses.append("record_date >= %s")
+            params.append(start_date_str)
+        if end_date_str:
+            where_clauses.append("record_date <= %s")
+            params.append(end_date_str)
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        query += " ORDER BY record_date ASC"
+
+        cursor.execute(query, tuple(params))
+        records = cursor.fetchall()  # Retorna [{ 'habit_id': ..., 'record_date': ..., 'quantity_completed': ...}, ...]
+        cursor.close()
+
+        # Converte datetime.date para string no formato ISO para JSON
+        formatted_records = []
+        for record in records:
+            formatted_records.append(
+                {
+                    "habit_id": record["habit_id"],
+                    "record_date": record["record_date"].isoformat(),
+                    "quantity_completed": record["quantity_completed"],
+                }
+            )
+
+        print(
+            f"LOG: Retornando {len(formatted_records)} registros de todos os hábitos."
+        )
+        return jsonify(formatted_records), 200
+    except Exception as e:
+        print(f"LOG: Erro ao obter todos os registros para heatmap geral: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
