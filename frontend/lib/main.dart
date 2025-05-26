@@ -330,11 +330,8 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // O Scaffold principal agora não tem AppBar, pois cada tela dentro
-    // do CustomScrollView (nas telas de lista) terá seu próprio SliverAppBar.
-    // A tela OverallProgressScreen terá uma AppBar normal.
     return Scaffold(
-      body: IndexedStack( // Usar IndexedStack para manter o estado das telas
+      body: IndexedStack(
         index: _selectedIndex,
         children: _widgetOptions,
       ),
@@ -350,63 +347,59 @@ class _MainScreenState extends State<MainScreen> {
             activeIcon: Icon(Icons.timeline),
             label: 'Progresso',
           ),
-          BottomNavigationBarItem( // Novo item para a barra de navegação
+          BottomNavigationBarItem(
             icon: Icon(Icons.insights_outlined),
             activeIcon: Icon(Icons.insights),
             label: 'Geral',
           ),
         ],
         currentIndex: _selectedIndex,
-        selectedItemColor:
-            Theme.of(
-              context,
-            ).colorScheme.primary,
+        selectedItemColor: Theme.of(context).colorScheme.primary,
         onTap: _onItemTapped,
-        backgroundColor:
-            Theme.of(context)
-                .colorScheme
-                .surfaceVariant,
-        unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant
-            .withOpacity(0.7),
-        type:
-            BottomNavigationBarType
-                .fixed,
+        backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+        unselectedItemColor:
+            Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+        type: BottomNavigationBarType.fixed,
       ),
-      floatingActionButton: FloatingActionButton.large( // FAB GRANDE
-        onPressed: () async {
-          // A lógica de refresh após o pop do HabitFormScreen
-          // precisará ser tratada dentro das próprias telas de lista
-          // se elas forem convertidas para StatefulWidget e tiverem um método de refresh.
-          // Por enquanto, o refresh é manual via botão na AppBar das listas.
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const HabitFormScreen()),
-          );
-          // Após o retorno do HabitFormScreen, tentamos forçar um refresh
-          // da tela atualmente selecionada, se ela tiver um método para isso.
-          // Isso é um pouco mais complexo de fazer diretamente daqui sem um
-          // gerenciador de estado ou GlobalKeys.
-          // A maneira mais simples é que as telas de lista (HabitListScreen, HabitProgressListScreen)
-          // recarreguem seus dados no initState e tenham um botão de refresh.
-          if (mounted && (_selectedIndex == 0 || _selectedIndex == 1)) {
-             // Tentativa de "notificar" a tela para recarregar.
-             // A forma mais simples é reconstruir o MainScreen, o que pode não ser ideal.
-             // Idealmente, HabitListScreen e HabitProgressListScreen teriam um método
-             // que poderia ser chamado via GlobalKey, ou usariam um provider.
-             // Para este exemplo, vamos apenas reconstruir o MainScreen para forçar
-             // a reconstrução das telas filhas.
-            setState(() {});
-          }
-        },
-        child: const Icon(Icons.add_rounded),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer, // Cor M3 para FAB grande
-        foregroundColor: Theme.of(context).colorScheme.onTertiaryContainer,
-        shape: RoundedRectangleBorder( // Forma "Squircle"
-          borderRadius: BorderRadius.circular(28.0), // Raio típico para FAB.large squircle
-        ),
-        elevation: 4.0, // Sombra padrão do FAB
-      ),
-      // floatingActionButtonLocation: FloatingActionButtonLocation.endFloat, // Padrão já é bom
+      // Condiciona a exibição do FAB
+      floatingActionButton: _selectedIndex == 0 // Exibe o FAB apenas se o índice for 0 (tela "Hábitos")
+          ? FloatingActionButton.large(
+              onPressed: () async {
+                // A navegação para HabitFormScreen deve funcionar como antes
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HabitFormScreen()),
+                );
+                // Para atualizar a HabitListScreen após adicionar um hábito:
+                // A HabitListScreen já tem um _loadAllHabitsAndSetupFilters no initState.
+                // Se a navegação de volta causar um rebuild ou se você tiver um
+                // mecanismo de callback/provider, ela pode se atualizar.
+                // Uma forma simples de tentar forçar um refresh na HabitListScreen
+                // se ela estiver visível (_selectedIndex == 0) é chamar setState aqui,
+                // o que reconstrói o MainScreen e, por consequência, o IndexedStack
+                // pode reconstruir seu filho atual.
+                // No entanto, a melhor prática seria a HabitListScreen escutar
+                // por mudanças ou ser explicitamente atualizada.
+                if (mounted && _selectedIndex == 0) {
+                    // Se HabitListScreen tiver uma GlobalKey e um método de refresh,
+                    // você poderia chamá-lo.
+                    // Ex: habitListScreenKey.currentState?.refreshHabits();
+                    // Por ora, um setState() no MainScreen pode ser suficiente
+                    // se a HabitListScreen se reconstituir adequadamente.
+                    // Como _widgetOptions contém const HabitListScreen(), ela será
+                    // reconstruída se MainScreen for reconstruída.
+                  setState(() {});
+                }
+              },
+              child: const Icon(Icons.add_rounded),
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              foregroundColor: Theme.of(context).colorScheme.onTertiaryContainer,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(28.0),
+              ),
+              elevation: 4.0,
+            )
+          : null, // Não exibe FAB para os outros índices
     );
   }
 }

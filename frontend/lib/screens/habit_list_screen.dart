@@ -1,10 +1,15 @@
-// lib/screens/habit_list_screen.dart
-import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+// frontend/lib/screens/habit_list_screen.dart
 import 'dart:convert';
-import '../models/habit.dart';
-import '../models/category_model.dart';
-import 'package:frontend/screens/habit_form_screen.dart';
+import 'dart:io'; // Para File
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:frontend/models/category_model.dart'; // Certifique-se que o caminho está correto
+import 'package:frontend/models/habit.dart'; // Certifique-se que o caminho está correto
+import 'package:frontend/screens/habit_form_screen.dart'; // Certifique-se que o caminho está correto
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+// import 'package:share_plus/share_plus.dart'; // Descomente se for usar SharePlus para exportar
 
 class HabitListScreen extends StatefulWidget {
   const HabitListScreen({super.key});
@@ -26,11 +31,9 @@ class _HabitListScreenState extends State<HabitListScreen> {
     _loadAllHabitsAndSetupFilters();
   }
 
-  // Adicionado para permitir que MainScreen force um refresh
   void refreshHabits() {
     _loadAllHabitsAndSetupFilters();
   }
-
 
   Future<void> _loadAllHabitsAndSetupFilters() async {
     if (!mounted) return;
@@ -348,6 +351,167 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
+  // --- INÍCIO DAS NOVAS FUNÇÕES PARA IMPORTAR/EXPORTAR/DELETAR ---
+  Future<void> _exportData() async {
+    try {
+      final response = await http.get(Uri.parse('$_baseUrl/export_data'));
+      if (response.statusCode == 200) {
+        final String jsonData = response.body;
+
+        final directory = await getDownloadsDirectory();
+        if (directory == null && mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Não foi possível acessar o diretório de downloads.')));
+            return;
+        }
+        final String timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').split('.')[0];
+        final String fileName = 'habits_backup_$timestamp.json';
+        final File file = File('${directory!.path}/$fileName');
+        await file.writeAsString(jsonData);
+
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Dados exportados para: ${file.path}')),
+          );
+        }
+        // Opcional: usar share_plus para compartilhar o arquivo
+        // await Share.shareXFiles([XFile(file.path)], text: 'Backup dos Hábitos');
+
+      } else {
+         if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao exportar dados: ${response.statusCode} - ${response.body}')),
+          );
+        }
+      }
+    } catch (e) {
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro de conexão ao exportar: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importData() async {
+    bool confirmImport = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('Importar Dados?'),
+            content: const Text(
+                'Isso substituirá TODOS os dados existentes. Deseja continuar?'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Importar e Substituir'),
+              ),
+            ],
+          ),
+        ) ?? false;
+
+    if (!confirmImport || !mounted) return;
+
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        File file = File(result.files.single.path!);
+        String jsonData = await file.readAsString();
+
+        final response = await http.post(
+          Uri.parse('$_baseUrl/import_data'),
+          headers: <String, String>{
+            'Content-Type': 'application/json; charset=UTF-8',
+          },
+          body: jsonData,
+        );
+
+        if (mounted) {
+          if (response.statusCode == 201) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Dados importados com sucesso!')),
+            );
+            _refreshDataAfterModification();
+          } else {
+            final errorData = jsonDecode(response.body);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Erro ao importar dados: ${errorData['error'] ?? response.body}')),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Importação cancelada.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro durante a importação: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteAllData() async {
+    bool confirmDelete = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('EXCLUIR TODOS OS DADOS?'),
+            content: const Text(
+                'ATENÇÃO: Esta ação é irreversível e apagará todos os seus hábitos, categorias e históricos. Deseja continuar?'),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              TextButton(
+                style: TextButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error, foregroundColor: Theme.of(context).colorScheme.onError),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('SIM, EXCLUIR TUDO'),
+              ),
+            ],
+          ),
+        ) ?? false;
+
+    if (!confirmDelete || !mounted) return;
+
+    try {
+      final response = await http.delete(Uri.parse('$_baseUrl/delete_all_data'));
+      if (mounted) {
+        if (response.statusCode == 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Todos os dados foram excluídos com sucesso!')),
+          );
+          _refreshDataAfterModification();
+        } else {
+           final errorData = jsonDecode(response.body);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Erro ao excluir dados: ${errorData['error'] ?? response.body}')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro de conexão ao excluir dados: $e')),
+        );
+      }
+    }
+  }
+  // --- FIM DAS NOVAS FUNÇÕES ---
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -355,12 +519,44 @@ class _HabitListScreenState extends State<HabitListScreen> {
         slivers: <Widget>[
           SliverAppBar.large(
             title: const Text('Meus Hábitos'),
-            expandedHeight: 120.0, // Reduzido para diminuir o espaço do título
+            expandedHeight: 120.0,
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),
                 onPressed: _loadAllHabitsAndSetupFilters,
               ),
+              // --- INÍCIO DO NOVO BOTÃO DE MENU ---
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'export') {
+                    _exportData();
+                  } else if (value == 'import') {
+                    _importData();
+                  } else if (value == 'delete_all') {
+                    _deleteAllData();
+                  }
+                },
+                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem<String>(
+                    value: 'import',
+                    child: ListTile(leading: Icon(Icons.file_upload_outlined), title: Text('Importar Dados')),
+                  ),
+                  const PopupMenuItem<String>(
+                    value: 'export',
+                    child: ListTile(leading: Icon(Icons.file_download_outlined), title: Text('Exportar Dados')),
+                  ),
+                  const PopupMenuDivider(),
+                  PopupMenuItem<String>(
+                    value: 'delete_all',
+                    child: ListTile(
+                      leading: Icon(Icons.delete_forever_outlined, color: Theme.of(context).colorScheme.error),
+                      title: Text('Deletar Todos os Dados', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.manage_history_outlined), // Ícone sugestivo para gerenciamento de dados
+              ),
+              // --- FIM DO NOVO BOTÃO DE MENU ---
             ],
           ),
           SliverToBoxAdapter(
@@ -498,22 +694,23 @@ class _HabitListScreenState extends State<HabitListScreen> {
                           progressFraction = (habit.currentPeriodQuantity ?? 0).toDouble() / habit.targetQuantity!.toDouble();
                           progressFraction = progressFraction.clamp(0.0, 1.0);
                         } else {
-                           hasTargetAndIsQuantitative = false;
-                           isTargetMet = false;
+                           hasTargetAndIsQuantitative = false; // Não há meta quantitativa para mostrar progresso em barra
+                           isTargetMet = (habit.currentPeriodQuantity ?? 0) > 0; // Considera "completo" se houver qualquer quantidade
+                           progressFraction = isTargetMet ? 1.0 : 0.0; // Barra cheia ou vazia
                         }
 
-                        if (isTargetMet) {
+                        if (isTargetMet && hasTargetAndIsQuantitative) { // Meta quantitativa atingida
                           mainButtonIcon = Icons.check_rounded;
                           mainButtonContainerColor = Theme.of(context).colorScheme.surfaceContainerLowest;
                           mainButtonIconColor = Theme.of(context).colorScheme.primary;
-                          disableMainButtonTap = true;
-                        } else {
+                          disableMainButtonTap = true; // Desabilita se a meta específica foi atingida
+                        } else { // Meta quantitativa não atingida (ou não existe meta)
                           mainButtonIcon = Icons.add_rounded;
                           mainButtonContainerColor = Theme.of(context).colorScheme.primaryContainer;
                           mainButtonIconColor = Theme.of(context).colorScheme.onPrimaryContainer;
-                          disableMainButtonTap = false;
+                          disableMainButtonTap = false; // Permite adicionar mais
                         }
-                      } else {
+                      } else { // Booleano
                         isTargetMet = habit.isCompletedToday;
                         mainButtonIcon = Icons.check_rounded;
                         if (habit.isCompletedToday) {
@@ -538,7 +735,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                           ),
                           elevation: 2,
                           clipBehavior: Clip.antiAlias,
-                          child: LayoutBuilder(
+                          child: LayoutBuilder( // Adicionado para obter a largura do card
                             builder: (context, constraints) {
                               final cardWidth = constraints.maxWidth;
                               final progressBarWidth = cardWidth * progressFraction;
@@ -546,7 +743,8 @@ class _HabitListScreenState extends State<HabitListScreen> {
 
                               return Stack(
                                 children: [
-                                  if (hasTargetAndIsQuantitative || isBoolean)
+                                  // Barra de progresso visual no fundo
+                                  if (hasTargetAndIsQuantitative || isBoolean) // Mostrar barra para quantitativos com meta ou booleanos
                                     Positioned.fill(
                                       child: Align(
                                         alignment: Alignment.centerLeft,
@@ -554,6 +752,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                           width: progressBarWidth,
                                           decoration: BoxDecoration(
                                             color: progressColor,
+                                            // borderRadius: BorderRadius.circular(16), // Para acompanhar o card
                                           ),
                                         ),
                                       ),
@@ -564,10 +763,10 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                     ),
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisSize: MainAxisSize.min, // Para o Card não tentar ser infinito
                                       children: [
                                         Padding(
-                                          padding: const EdgeInsets.only(right: 60.0),
+                                          padding: const EdgeInsets.only(right: 60.0), // Espaço para o botão de check/add e menu
                                           child: Text(
                                             habit.name,
                                             style: TextStyle(
@@ -595,6 +794,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                             )).toList(),
                                           ),
                                         const SizedBox(height: 8),
+                                        // Texto de Progresso
                                         if (isQuantitative)
                                           Text(
                                             'Progresso: ${habit.currentPeriodQuantity ?? 0}${hasTargetAndIsQuantitative ? " de ${habit.targetQuantity}" : ""} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
@@ -607,19 +807,19 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                            Text(
                                             'Completo hoje!',
                                             style: TextStyle(
-                                              fontSize: 14, color: Theme.of(context).colorScheme.primary,
+                                              fontSize: 14, color: Theme.of(context).colorScheme.primary, // Cor de destaque
                                               fontWeight: FontWeight.w500
                                             ),
                                           )
                                         else if (isBoolean && !habit.isCompletedToday)
                                           Text(
-                                            'Pendente',
+                                            'Pendente', // Ou "Toque para completar"
                                             style: TextStyle(
                                               fontSize: 14,
                                               color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
                                             ),
                                           )
-                                        else if (habit.countMethod == 'weekly' || habit.countMethod == 'monthly')
+                                        else if (habit.countMethod == 'weekly' || habit.countMethod == 'monthly') // Fallback para outros tipos se necessário
                                            Text(
                                             'Progresso: ${habit.currentPeriodDaysCompleted ?? 0} de ${habit.targetDaysPerWeek ?? 'N/A'} dias',
                                             style: TextStyle(
@@ -628,13 +828,14 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                             ),
                                           ),
                                         const SizedBox(height: 4),
+                                        // Streak
                                         if (habit.currentStreak > 0)
                                           Row(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
                                               Icon(
                                                 Icons.local_fire_department_rounded,
-                                                color: Colors.orangeAccent,
+                                                color: Colors.orangeAccent, // Ou Theme.of(context).colorScheme.tertiary
                                                 size: 18,
                                               ),
                                               const SizedBox(width: 4),
@@ -648,30 +849,31 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                             ],
                                           )
                                         else
-                                          const SizedBox(height: 18),
-                                        const SizedBox(height: 10),
+                                          const SizedBox(height: 18), // Placeholder para manter a altura consistente
+                                        const SizedBox(height: 10), // Espaçamento inferior
                                       ],
                                     ),
                                   ),
+                                  // Botão de Check/Add
                                   Positioned(
-                                    top: 12, right: 12,
+                                    top: 12, right: 12, // Ajuste conforme necessário
                                     child: Material(
                                       color: mainButtonContainerColor,
                                       borderRadius: BorderRadius.circular(12.0),
-                                      elevation: disableMainButtonTap ? 0 : 2,
+                                      elevation: disableMainButtonTap ? 0 : 2, // Sutil elevação quando ativo
                                       child: InkWell(
                                         borderRadius: BorderRadius.circular(12.0),
                                         onTap: disableMainButtonTap
-                                            ? null
+                                            ? null // Desabilitado se a meta foi atingida (para quantitativos) ou já completo (booleanos)
                                             : () {
                                                 if (isQuantitative) {
                                                   _showQuantityDialog(habit);
-                                                } else {
+                                                } else { // Booleano
                                                   _recordHabitCompletion(habit.id, habit.completionMethod);
                                                 }
                                               },
                                         child: Container(
-                                          width: 55, height: 55,
+                                          width: 55, height: 55, // Tamanho do botão
                                           alignment: Alignment.center,
                                           child: Icon(
                                             mainButtonIcon,
@@ -682,6 +884,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                       ),
                                     ),
                                   ),
+                                  // Botão de Menu (Três Pontos)
                                   Positioned(
                                     bottom: 8, right: 8,
                                     child: PopupMenuButton<String>(
@@ -690,16 +893,16 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                         color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
                                         size: 26,
                                       ),
-                                      offset: const Offset(0, 30),
+                                      offset: const Offset(0, 30), // Ajusta a posição do menu
                                       onSelected: (value) async {
                                         if (value == 'edit') {
-                                          final result = await Navigator.push( // Adicionado await e result
+                                          final result = await Navigator.push(
                                             context,
                                             MaterialPageRoute(
                                               builder: (context) => HabitFormScreen(habit: habit),
                                             ),
                                           );
-                                          if (result == true && mounted) { // Adicionado mounted check
+                                          if (result == true && mounted) {
                                             _refreshDataAfterModification();
                                           }
                                         } else if (value == 'delete') {
@@ -727,7 +930,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
                                   ),
                                 ],
                               );
-                            },
+                            }
                           ),
                         ),
                       );

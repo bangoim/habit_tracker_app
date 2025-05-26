@@ -471,5 +471,227 @@ def get_all_habit_records_for_heatmap():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/export_data", methods=["GET"])
+def export_data():
+    try:
+        cursor = mysql.connection.cursor()
+
+        # Exportar Categorias
+        cursor.execute("SELECT id, name FROM categories")
+        categories_raw = cursor.fetchall()
+        categories_export = [
+            {"id_json": cat["id"], "name": cat["name"]} for cat in categories_raw
+        ]
+
+        # Exportar Hábitos
+        cursor.execute("""
+            SELECT h.id, h.name, h.description, h.count_method, h.completion_method,
+                   h.target_quantity, h.target_days_per_week, h.created_at
+            FROM habits h
+        """)
+        habits_raw = cursor.fetchall()
+        habits_export = []
+        for habit_raw in habits_raw:
+            # Buscar categorias para este hábito
+            cursor.execute(
+                """
+                SELECT category_id FROM habit_categories WHERE habit_id = %s
+            """,
+                (habit_raw["id"],),
+            )
+            habit_categories_raw = cursor.fetchall()
+            # Usamos o ID original do banco como id_json para facilitar o mapeamento
+            # das relações em habit_categories e habit_records
+            category_ids_json = [hc["category_id"] for hc in habit_categories_raw]
+
+            habits_export.append(
+                {
+                    "id_json": habit_raw["id"],
+                    "name": habit_raw["name"],
+                    "description": habit_raw["description"],
+                    "count_method": habit_raw["count_method"],
+                    "completion_method": habit_raw["completion_method"],
+                    "target_quantity": habit_raw["target_quantity"],
+                    "target_days_per_week": habit_raw["target_days_per_week"],
+                    "created_at": habit_raw["created_at"].isoformat()
+                    if isinstance(habit_raw["created_at"], datetime.datetime)
+                    else str(habit_raw["created_at"]),
+                    "category_ids_json": category_ids_json,
+                }
+            )
+
+        # Exportar Registros de Hábitos
+        cursor.execute(
+            "SELECT habit_id, record_date, quantity_completed FROM habit_records"
+        )
+        records_raw = cursor.fetchall()
+        records_export = [
+            {
+                "habit_id_json": rec["habit_id"],  # Usa o ID original do hábito
+                "record_date": rec["record_date"].isoformat()
+                if isinstance(rec["record_date"], datetime.date)
+                else str(rec["record_date"]),
+                "quantity_completed": rec["quantity_completed"],
+            }
+            for rec in records_raw
+        ]
+
+        cursor.close()
+
+        export_content = {
+            "categories": categories_export,
+            "habits": habits_export,
+            "habit_records": records_export,
+        }
+        return jsonify(export_content), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "Erro ao exportar dados", "details": str(e)}), 500
+
+
+@app.route("/import_data", methods=["POST"])
+def import_data():
+    try:
+        data = request.json
+
+        imported_categories = data.get("categories", [])
+        imported_habits = data.get("habits", [])
+        imported_records = data.get("habit_records", [])
+
+        cursor = mysql.connection.cursor()
+
+        # 1. Limpar dados existentes (ordem reversa de criação para FKs)
+        cursor.execute(
+            "SET FOREIGN_KEY_CHECKS=0"
+        )  # Desabilitar temporariamente para facilitar a limpeza
+        cursor.execute("DELETE FROM habit_records")
+        cursor.execute("DELETE FROM habit_categories")
+        cursor.execute("DELETE FROM habits")
+        cursor.execute("DELETE FROM categories")
+        cursor.execute("SET FOREIGN_KEY_CHECKS=1")  # Reabilitar
+
+        # Mapeamentos de IDs JSON para novos IDs do DB
+        category_id_map = {}  # json_id -> db_id
+        habit_id_map = {}  # json_id -> db_id
+
+        # 2. Importar Categorias
+        for cat_data in imported_categories:
+            cursor.execute(
+                "INSERT INTO categories (name) VALUES (%s)", (cat_data["name"],)
+            )
+            new_category_id = cursor.lastrowid
+            category_id_map[cat_data["id_json"]] = new_category_id
+
+        # 3. Importar Hábitos e suas relações com categorias
+        for habit_data in imported_habits:
+            created_at_dt = None
+            if habit_data.get("created_at"):
+                try:
+                    created_at_dt = datetime.datetime.fromisoformat(
+                        habit_data["created_at"].replace("Z", "+00:00")
+                    )
+                except (
+                    ValueError
+                ):  # Tentar apenas parsing de data se datetime falhar, ou deixar null
+                    try:
+                        created_at_dt = datetime.datetime.combine(
+                            datetime.date.fromisoformat(habit_data["created_at"]),
+                            datetime.time.min,
+                        )
+                    except ValueError:
+                        pass  # ou definir um default, ou logar um aviso
+
+            cursor.execute(
+                """INSERT INTO habits (name, description, count_method, completion_method,
+                                     target_quantity, target_days_per_week, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    habit_data["name"],
+                    habit_data.get("description"),
+                    habit_data["count_method"],
+                    habit_data["completion_method"],
+                    habit_data.get("target_quantity"),
+                    habit_data.get("target_days_per_week"),
+                    created_at_dt,
+                ),
+            )
+            new_habit_id = cursor.lastrowid
+            habit_id_map[habit_data["id_json"]] = new_habit_id
+
+            # Associar categorias ao hábito
+            for json_category_id in habit_data.get("category_ids_json", []):
+                if json_category_id in category_id_map:
+                    db_category_id = category_id_map[json_category_id]
+                    cursor.execute(
+                        "INSERT INTO habit_categories (habit_id, category_id) VALUES (%s, %s)",
+                        (new_habit_id, db_category_id),
+                    )
+
+        # 4. Importar Registros de Hábitos
+        for record_data in imported_records:
+            json_habit_id = record_data["habit_id_json"]
+            if json_habit_id in habit_id_map:
+                db_habit_id = habit_id_map[json_habit_id]
+                record_date_dt = None
+                if record_data.get("record_date"):
+                    try:
+                        record_date_dt = datetime.date.fromisoformat(
+                            record_data["record_date"]
+                        )
+                    except ValueError:
+                        pass  # Lidar com data inválida, se necessário
+
+                if record_date_dt:
+                    cursor.execute(
+                        """INSERT INTO habit_records (habit_id, record_date, quantity_completed)
+                        VALUES (%s, %s, %s)""",
+                        (
+                            db_habit_id,
+                            record_date_dt,
+                            record_data.get(
+                                "quantity_completed", 1
+                            ),  # Default para 1 se for booleano
+                        ),
+                    )
+
+        mysql.connection.commit()
+        cursor.close()
+        return jsonify({"message": "Dados importados com sucesso!"}), 201
+
+    except KeyError as e:
+        traceback.print_exc()
+        mysql.connection.rollback()
+        return jsonify({"error": f"Formato JSON inválido. Campo faltando: {e}"}), 400
+    except Exception as e:
+        traceback.print_exc()
+        mysql.connection.rollback()
+        return jsonify({"error": "Erro ao importar dados", "details": str(e)}), 500
+
+
+@app.route("/delete_all_data", methods=["DELETE"])
+def delete_all_data():
+    try:
+        cursor = mysql.connection.cursor()
+        cursor.execute("SET FOREIGN_KEY_CHECKS=0")  # Desabilitar checagem de FK
+        cursor.execute("DELETE FROM habit_records")
+        cursor.execute("DELETE FROM habit_categories")
+        cursor.execute("DELETE FROM habits")
+        cursor.execute(
+            "DELETE FROM categories"
+        )  # Decide se quer limpar categorias também
+        # Se não quiser limpar categorias: cursor.execute("TRUNCATE TABLE categories") -> para resetar auto_increment se a tabela estiver vazia
+        cursor.execute("SET FOREIGN_KEY_CHECKS=1")  # Reabilitar checagem de FK
+        mysql.connection.commit()
+        cursor.close()
+        return jsonify({"message": "Todos os dados foram deletados com sucesso!"}), 200
+    except Exception as e:
+        traceback.print_exc()
+        mysql.connection.rollback()
+        return jsonify(
+            {"error": "Erro ao deletar todos os dados", "details": str(e)}
+        ), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
