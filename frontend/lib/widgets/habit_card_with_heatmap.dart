@@ -5,8 +5,6 @@ import 'dart:convert';
 import 'package:flutter_heatmap_calendar/flutter_heatmap_calendar.dart';
 import 'package:frontend/models/habit.dart';
 import 'package:frontend/models/habit_record.dart';
-import 'package:frontend/screens/habit_form_screen.dart';
-import 'package:frontend/screens/habit_heatmap_screen.dart'; // Para a tela de heatmap detalhada
 
 class HabitCardWithHeatmap extends StatefulWidget {
   final Habit habit;
