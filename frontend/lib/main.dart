@@ -399,7 +399,7 @@ class _MainScreenState extends State<MainScreen> {
           }
         },
         child: const Icon(Icons.add_rounded),
-        backgroundColor: Theme.of(context).colorScheme.tertiaryContainer, // Cor M3 para FAB grande
+        backgroundColor: Theme.of(context).colorScheme.primaryContainer, // Cor M3 para FAB grande
         foregroundColor: Theme.of(context).colorScheme.onTertiaryContainer,
         shape: RoundedRectangleBorder( // Forma "Squircle"
           borderRadius: BorderRadius.circular(28.0), // Raio típico para FAB.large squircle
