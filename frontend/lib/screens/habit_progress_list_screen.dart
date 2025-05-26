@@ -4,9 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/habit.dart';
 import '../models/category_model.dart';
-import 'package:frontend/screens/habit_form_screen.dart'; // Ainda precisa para ações de check/edição (se passadas)
-import 'package:frontend/models/habit_record.dart';
-import 'package:frontend/widgets/habit_card_with_heatmap.dart'; // Importa o widget de cartão com heatmap
+import 'package:frontend/widgets/habit_card_with_heatmap.dart';
 
 class HabitProgressListScreen extends StatefulWidget {
   const HabitProgressListScreen({super.key});
@@ -21,8 +19,13 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
   List<CategoryModel> _categoriesInUseForFilter = [];
   int? _selectedCategoryIdFilter;
 
-  final String _baseUrl =
-      'http://10.0.2.2:5000'; // Ajuste este IP se necessário
+  final String _baseUrl = 'http://10.0.2.2:5000';
+
+  // Adicionado para permitir que MainScreen force um refresh
+  void refreshHabits() {
+    _loadAllHabitsAndSetupFilters();
+  }
+
 
   @override
   void initState() {
@@ -32,15 +35,12 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
 
   Future<void> _loadAllHabitsAndSetupFilters() async {
     if (!mounted) return;
-
     setState(() {
       _selectedCategoryIdFilter = null;
       _futureDisplayedHabits = fetchHabits(categoryId: null);
     });
-
     try {
       final List<Habit>? allHabits = await _futureDisplayedHabits;
-
       if (allHabits != null && mounted) {
         Set<CategoryModel> usedCategoriesSet = {};
         for (var habit in allHabits) {
@@ -50,7 +50,6 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
         }
         List<CategoryModel> sortedUsedCategories = usedCategoriesSet.toList();
         sortedUsedCategories.sort((a, b) => a.name.compareTo(b.name));
-
         setState(() {
           _categoriesInUseForFilter = sortedUsedCategories;
         });
@@ -81,7 +80,6 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
     if (categoryId != null) {
       apiUrl += '?category_id=$categoryId';
     }
-
     try {
       final response = await http.get(Uri.parse(apiUrl));
       if (response.statusCode == 200) {
@@ -99,9 +97,6 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
     await _loadAllHabitsAndSetupFilters();
   }
 
-  // Métodos de _recordHabitCompletion e _showQuantityDialog podem ser removidos daqui
-  // se não for possível registrar hábitos da tela de progresso.
-  // Vou mantê-los por enquanto, caso o botão de check seja útil aqui.
   Future<void> _recordHabitCompletion(
     int habitId,
     String completionMethod, {
@@ -130,6 +125,7 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hábito já registrado para hoje!')),
         );
+         _refreshDataAfterModification();
       } else {
         final errorData = jsonDecode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -148,6 +144,21 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
   Future<void> _showQuantityDialog(Habit habit) async {
     TextEditingController quantityController = TextEditingController();
     final formKeyDialog = GlobalKey<FormState>();
+    int currentAmount = habit.currentPeriodQuantity ?? 0;
+    int targetAmount = habit.targetQuantity ?? 0;
+    int maxAddable = 0;
+    bool canAddMore = true;
+
+    if (habit.targetQuantity != null && habit.targetQuantity! > 0) {
+        maxAddable = targetAmount - currentAmount;
+        if (maxAddable <= 0) {
+            canAddMore = false;
+            maxAddable = 0;
+        }
+    } else {
+        canAddMore = true;
+    }
+
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -165,14 +176,17 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
                     decoration: InputDecoration(
                       labelText:
                           habit.completionMethod == 'quantity'
-                              ? 'Quantidade realizada'
-                              : 'Minutos realizados',
+                              ? 'Quantidade a adicionar'
+                              : 'Minutos a adicionar',
+                      helperText: canAddMore && habit.targetQuantity != null
+                        ? (maxAddable > 0 ? 'Faltam $maxAddable para a meta.' : 'Meta já atingida.')
+                        : (habit.targetQuantity == null ? 'Sem meta definida.' : null),
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty)
                         return 'Por favor, insira um valor';
-                      if (int.tryParse(value) == null)
-                        return 'Por favor, insira um número válido';
+                      if (int.tryParse(value) == null || int.parse(value) <=0)
+                        return 'Por favor, insira um número positivo válido';
                       return null;
                     },
                   ),
@@ -189,11 +203,42 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
               child: const Text('Registrar'),
               onPressed: () {
                 if (formKeyDialog.currentState!.validate()) {
-                  _recordHabitCompletion(
-                    habit.id,
-                    habit.completionMethod,
-                    quantityCompleted: int.parse(quantityController.text),
-                  );
+                  int quantityEntered = int.parse(quantityController.text);
+                  int quantityToRecord = quantityEntered;
+
+                  if (habit.targetQuantity != null && habit.targetQuantity! > 0) {
+                    if (currentAmount < targetAmount) {
+                       int neededToComplete = targetAmount - currentAmount;
+                       if (quantityEntered > neededToComplete) {
+                           quantityToRecord = neededToComplete;
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if(mounted){
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Valor ajustado para $quantityToRecord para atingir a meta.'))
+                                  );
+                                }
+                            });
+                       }
+                    } else {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                           if(mounted){
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Meta já atingida. Nenhum valor adicional registrado.'))
+                            );
+                           }
+                        });
+                        Navigator.of(context).pop();
+                        return;
+                    }
+                  }
+
+                  if (quantityToRecord > 0) {
+                    _recordHabitCompletion(
+                      habit.id,
+                      habit.completionMethod,
+                      quantityCompleted: quantityToRecord,
+                    );
+                  }
                   Navigator.of(context).pop();
                 }
               },
@@ -203,24 +248,24 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
       },
     );
   }
-  // Fim dos métodos de registro
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Progresso dos Hábitos'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadAllHabitsAndSetupFilters,
+      body: CustomScrollView(
+        slivers: <Widget>[
+          SliverAppBar.large(
+            title: const Text('Progresso dos Hábitos'),
+            expandedHeight: 120.0, // Reduzido para diminuir o espaço do título
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _loadAllHabitsAndSetupFilters,
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_futureDisplayedHabits != null)
-            Padding(
+          SliverToBoxAdapter(
+            child: _futureDisplayedHabits != null ? Padding(
               padding: const EdgeInsets.symmetric(
                 vertical: 8.0,
                 horizontal: 4.0,
@@ -262,7 +307,7 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
                             8.0,
-                          ), // Mais arredondado
+                          ),
                           side: BorderSide(
                             color:
                                 _selectedCategoryIdFilter == null
@@ -275,7 +320,7 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
                         backgroundColor:
                             Theme.of(
                               context,
-                            ).colorScheme.surface, // Fundo do chip
+                            ).colorScheme.surface,
                       ),
                     ),
                     ..._categoriesInUseForFilter.map((category) {
@@ -318,7 +363,7 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(
                               8.0,
-                            ), // Mais arredondado
+                            ),
                             side: BorderSide(
                               color:
                                   isSelected
@@ -331,67 +376,64 @@ class _HabitProgressListScreenState extends State<HabitProgressListScreen> {
                           backgroundColor:
                               Theme.of(
                                 context,
-                              ).colorScheme.surface, // Fundo do chip
+                              ).colorScheme.surface,
                         ),
                       );
                     }).toList(),
                   ],
                 ),
               ),
-            ),
-          Expanded(
-            child: FutureBuilder<List<Habit>>(
-              future: _futureDisplayedHabits,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                } else if (snapshot.hasError) {
-                  return Center(
+            ) : const SizedBox.shrink(),
+          ),
+          FutureBuilder<List<Habit>>(
+            future: _futureDisplayedHabits,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SliverFillRemaining(child: Center(child: CircularProgressIndicator()));
+              } else if (snapshot.hasError) {
+                return SliverFillRemaining(
+                  child: Center(
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
                         'Erro ao carregar hábitos: ${snapshot.error}\nPor favor, tente atualizar.',
                       ),
                     ),
-                  );
-                } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('Nenhum hábito encontrado.'));
-                } else {
-                  final habits = snapshot.data!;
-                  return ListView.builder(
-                    padding: const EdgeInsets.only(
-                      bottom: 0,
-                      top: 0,
-                      left: 8.0,
-                      right: 8.0,
-                    ),
-                    itemCount: habits.length,
-                    itemBuilder: (context, index) {
+                  ),
+                );
+              } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const SliverFillRemaining(child: Center(child: Text('Nenhum hábito encontrado.')));
+              } else {
+                final habits = snapshot.data!;
+                return SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
                       Habit habit = habits[index];
-                      // Usa HabitCardWithHeatmap aqui para exibir o heatmap individual
-                      // Mas SEM as características de texto
-                      return HabitCardWithHeatmap(
-                        habit: habit,
-                        onHabitModified: _refreshDataAfterModification,
-                        onCheckButtonPressed: (habitToRecord) {
-                          if (habitToRecord.completionMethod == 'quantity' ||
-                              habitToRecord.completionMethod == 'minutes') {
-                            _showQuantityDialog(habitToRecord);
-                          } else {
-                            _recordHabitCompletion(
-                              habitToRecord.id,
-                              habitToRecord.completionMethod,
-                            );
-                          }
-                        },
-                        showDetails:
-                            false, // NOVO: Passa false para ocultar os detalhes
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                        child: HabitCardWithHeatmap(
+                          habit: habit,
+                          onHabitModified: _refreshDataAfterModification,
+                          onCheckButtonPressed: (habitToRecord) {
+                            if (habitToRecord.completionMethod == 'quantity' ||
+                                habitToRecord.completionMethod == 'minutes') {
+                              _showQuantityDialog(habitToRecord);
+                            } else {
+                              _recordHabitCompletion(
+                                habitToRecord.id,
+                                habitToRecord.completionMethod,
+                              );
+                            }
+                          },
+                          showDetails: false,
+                        ),
                       );
                     },
-                  );
-                }
-              },
-            ),
+                    childCount: habits.length,
+                  ),
+                );
+              }
+            },
           ),
         ],
       ),

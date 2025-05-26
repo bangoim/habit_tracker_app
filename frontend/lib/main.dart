@@ -1,14 +1,17 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
+// As importações de http, dart:convert e flutter_heatmap_calendar
+// são usadas em OverallProgressScreen, que foi movida para cá.
+// Se OverallProgressScreen for separada novamente, essas importações
+// podem ser movidas para o arquivo dela.
 import 'package:http/http.dart'
-    as http; // Necessário para OverallProgressScreen
-import 'dart:convert'; // Necessário para OverallProgressScreen
-import 'package:flutter_heatmap_calendar/flutter_heatmap_calendar.dart'; // Necessário para OverallProgressScreen
+    as http;
+import 'dart:convert';
+import 'package:flutter_heatmap_calendar/flutter_heatmap_calendar.dart';
 
-// Importe as telas para as abas
-import 'package:frontend/screens/habit_list_screen.dart'; // Aba 1: Meus Hábitos (apenas lista e edição)
-import 'package:frontend/screens/habit_progress_list_screen.dart'; // NOVO: Aba 2: Progresso dos Hábitos (com heatmaps individuais)
-import 'package:frontend/screens/habit_form_screen.dart'; // Importe HabitFormScreen para o FAB
+import 'package:frontend/screens/habit_list_screen.dart';
+import 'package:frontend/screens/habit_progress_list_screen.dart';
+import 'package:frontend/screens/habit_form_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -22,28 +25,22 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Habit Tracker',
       theme: ThemeData(
-        // Removendo primarySwatch e usando ColorScheme.fromSeed para Material 3
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.teal, // Changed to Teal for a more vibrant base
-          brightness: Brightness.light, // Explicitly set to light mode
+          seedColor: Colors.teal,
+          brightness: Brightness.light,
         ),
         useMaterial3: true,
-        // Configurações globais para AppBar
-        appBarTheme: AppBarTheme(
-          backgroundColor:
-              Colors.teal.shade400, // Matching AppBar with seed color
-          foregroundColor: Colors.white, // White text and icons on AppBar
-          elevation: 0, // Sem sombra na AppBar
-          centerTitle: true, // Centraliza o título
-        ),
+        // AppBarTheme global removida daqui, pois cada SliverAppBar
+        // controlará sua própria aparência (especialmente a cor de fundo
+        // que se mistura com o scaffoldBackgroundColor quando scrollado).
       ),
       home: const MainScreen(),
     );
   }
 }
 
-// Classe OverallProgressScreen (mantida e movida implicitamente para cá para simplificar)
-// para o heatmap geral, será acessada da MainScreen como uma das abas.
+// OverallProgressScreen (mantida aqui para simplicidade, mas poderia ser um arquivo separado)
+// Esta tela NÃO usará o SliverAppBar.large por enquanto, para manter o foco nas telas de lista.
 class OverallProgressScreen extends StatefulWidget {
   const OverallProgressScreen({super.key});
 
@@ -53,8 +50,8 @@ class OverallProgressScreen extends StatefulWidget {
 
 class _OverallProgressScreenState extends State<OverallProgressScreen> {
   final String _baseUrl =
-      'http://10.0.2.2:5000'; // Ajuste este IP se necessário
-  Map<DateTime, int> _overallDatasets = {}; // Dataset para o heatmap geral
+      'http://10.0.2.2:5000';
+  Map<DateTime, int> _overallDatasets = {};
   bool _isLoadingOverallProgress = true;
   String? _overallErrorMessage;
 
@@ -72,7 +69,6 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
 
     try {
       final DateTime today = DateTime.now();
-      // Limite do heatmap para os últimos 12 meses (1 ano) para a visão geral
       final DateTime oneYearAgo = DateTime(
         today.year - 1,
         today.month,
@@ -90,10 +86,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
         List<dynamic> jsonList = jsonDecode(response.body);
         Map<DateTime, int> aggregatedDatasets = {};
 
-        // Agregando os dados de todos os hábitos por dia
         for (var json in jsonList) {
-          // Note: HabitRecord e Habit não são diretamente usados aqui, mas os imports ainda são necessários
-          // para o contexto geral do projeto.
           DateTime recordDate = DateTime.parse(json['record_date'] as String);
           DateTime normalizedDate = DateTime(
             recordDate.year,
@@ -102,7 +95,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
           );
           int quantity =
               json['quantity_completed'] as int? ??
-              1; // 1 para booleanos, ou a quantidade
+              1;
 
           aggregatedDatasets[normalizedDate] =
               (aggregatedDatasets[normalizedDate] ?? 0) + quantity;
@@ -136,8 +129,6 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Cores para o heatmap (reutilizadas da HabitHeatmapScreen)
-    // Manteremos essas cores do heatmap, pois elas se referem à intensidade e são independentes do tema principal
     Color githubLightGreen = Colors.green.shade200;
     Color githubMediumGreen = Colors.green.shade500;
     Color githubDarkGreen = Colors.green.shade800;
@@ -145,11 +136,11 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
     Color defaultDayColor =
         Colors
             .grey
-            .shade300; // Alterado para um cinza mais claro para combinar com o tema claro
+            .shade300;
 
     final DateTime heatmapStartDate = DateTime(
       DateTime.now().year - 1,
-      DateTime.now().month, // Mês atual do ano anterior
+      DateTime.now().month,
       DateTime.now().day,
     );
     final DateTime heatmapEndDate = DateTime.now();
@@ -158,16 +149,19 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
       backgroundColor:
           Theme.of(
             context,
-          ).colorScheme.surface, // Usar a cor de superfície do tema
-      appBar: AppBar(
+          ).colorScheme.surface,
+      appBar: AppBar( // AppBar normal para esta tela
         title: const Text('Progresso Geral'),
-        // As cores do AppBar agora vêm do ThemeData.appBarTheme
+        backgroundColor: Theme.of(context).colorScheme.surfaceVariant, // Cor de fundo para AppBar normal
+        foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        elevation: 0,
+        centerTitle: true,
         actions: [
           IconButton(
             icon: Icon(
               Icons.refresh,
-              color: Theme.of(context).colorScheme.onSurface,
-            ), // Cor do ícone
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
             onPressed: _fetchOverallProgressData,
           ),
         ],
@@ -185,7 +179,6 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
-                    // Cor do texto principal agora vem do tema
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -195,7 +188,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                     color:
                         Theme.of(context)
                             .colorScheme
-                            .surfaceVariant, // Usar surfaceVariant para o container
+                            .surfaceVariant,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -211,7 +204,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                       Text(
                         _overallDatasets.values
                             .fold(0, (sum, element) => sum + element)
-                            .toString(), // Soma todos os registros como um placeholder
+                            .toString(),
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -226,7 +219,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
             ),
           ),
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Text(
               'Atividade Diária (Todos os Hábitos)',
               style: TextStyle(
@@ -270,7 +263,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                         defaultColor: defaultDayColor,
                         textColor:
                             Colors
-                                .black87, // Alterado para texto mais escuro no heatmap
+                                .black87,
                         size: 14,
                         margin: const EdgeInsets.all(2),
                         borderRadius: 2,
@@ -278,41 +271,11 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                         showText: false,
                         showColorTip: true,
                         colorTipHelper: const [
-                          Text(
-                            'Nenhum',
-                            style: TextStyle(
-                              color: Colors.black87,
-                              fontSize: 10,
-                            ),
-                          ),
-                          Text(
-                            'Pouco',
-                            style: TextStyle(
-                              color: Colors.black87,
-                              fontSize: 10,
-                            ),
-                          ),
-                          Text(
-                            'Médio',
-                            style: TextStyle(
-                              color: Colors.black87,
-                              fontSize: 10,
-                            ),
-                          ),
-                          Text(
-                            'Muito',
-                            style: TextStyle(
-                              color: Colors.black87,
-                              fontSize: 10,
-                            ),
-                          ),
-                          Text(
-                            'Mais',
-                            style: TextStyle(
-                              color: Colors.black87,
-                              fontSize: 10,
-                            ),
-                          ),
+                          Text('Nenhum', style: TextStyle(color: Colors.black87, fontSize: 10)),
+                          Text('Pouco', style: TextStyle(color: Colors.black87, fontSize: 10)),
+                          Text('Médio', style: TextStyle(color: Colors.black87, fontSize: 10)),
+                          Text('Muito', style: TextStyle(color: Colors.black87, fontSize: 10)),
+                          Text('Mais', style: TextStyle(color: Colors.black87, fontSize: 10)),
                         ],
                         onClick: (date) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -332,7 +295,6 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
   }
 }
 
-// [MODIFICADO] MainScreen para gerenciar as 2 abas e o FAB
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -341,13 +303,24 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _selectedIndex = 0; // Índice da aba selecionada
+  int _selectedIndex = 0;
 
-  // Lista de widgets para cada aba
+  // As telas agora são instanciadas diretamente aqui para simplificar,
+  // mas em um app maior, você poderia usar chaves globais para
+  // chamar métodos de refresh nelas, se necessário.
   static final List<Widget> _widgetOptions = <Widget>[
-    const HabitListScreen(), // Aba 1: Meus Hábitos
-    const HabitProgressListScreen(), // Aba 2: Progresso
+    const HabitListScreen(),
+    const HabitProgressListScreen(),
+    const OverallProgressScreen(), // Adicionando a terceira tela
   ];
+
+  // Títulos para as AppBars de cada tela
+  static const List<String> _appBarTitles = <String>[
+    'Meus Hábitos',
+    'Progresso dos Hábitos',
+    'Visão Geral', // Título para a nova aba
+  ];
+
 
   void _onItemTapped(int index) {
     setState(() {
@@ -357,76 +330,83 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // O Scaffold principal agora não tem AppBar, pois cada tela dentro
+    // do CustomScrollView (nas telas de lista) terá seu próprio SliverAppBar.
+    // A tela OverallProgressScreen terá uma AppBar normal.
     return Scaffold(
-      body: Center(
-        child: _widgetOptions.elementAt(
-          _selectedIndex,
-        ), // Exibe a tela da aba selecionada
+      body: IndexedStack( // Usar IndexedStack para manter o estado das telas
+        index: _selectedIndex,
+        children: _widgetOptions,
       ),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
-            icon: Icon(Icons.list_alt),
-            label: 'Meus Hábitos',
+            icon: Icon(Icons.list_alt_outlined),
+            activeIcon: Icon(Icons.list_alt),
+            label: 'Hábitos',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
+            icon: Icon(Icons.timeline_outlined),
+            activeIcon: Icon(Icons.timeline),
             label: 'Progresso',
+          ),
+          BottomNavigationBarItem( // Novo item para a barra de navegação
+            icon: Icon(Icons.insights_outlined),
+            activeIcon: Icon(Icons.insights),
+            label: 'Geral',
           ),
         ],
         currentIndex: _selectedIndex,
         selectedItemColor:
             Theme.of(
               context,
-            ).colorScheme.primary, // Usar a cor primária do tema
+            ).colorScheme.primary,
         onTap: _onItemTapped,
         backgroundColor:
             Theme.of(context)
                 .colorScheme
-                .surfaceVariant, // Usar a cor de superfície do tema para o fundo da barra
+                .surfaceVariant,
         unselectedItemColor: Theme.of(context).colorScheme.onSurfaceVariant
-            .withOpacity(0.7), // Ícones não selecionados em um tom mais escuro
+            .withOpacity(0.7),
         type:
             BottomNavigationBarType
-                .fixed, // Garante que os rótulos sempre apareçam
+                .fixed,
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.large( // FAB GRANDE
         onPressed: () async {
-          final result = await Navigator.push(
+          // A lógica de refresh após o pop do HabitFormScreen
+          // precisará ser tratada dentro das próprias telas de lista
+          // se elas forem convertidas para StatefulWidget e tiverem um método de refresh.
+          // Por enquanto, o refresh é manual via botão na AppBar das listas.
+          await Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => const HabitFormScreen()),
           );
-          // Opcional: Se a tela de formulário retornar 'true', recarregar a lista de hábitos
-          if (result == true && _selectedIndex == 0) {
-            // Se estiver na aba "Meus Hábitos", force o refresh
-            // Isso pode ser feito de várias formas, a mais simples é reconstruir o widget.
-            // Para um refresh mais robusto, você precisaria de um Provider ou similar.
-            setState(() {
-              // Simplesmente reconstruir a aba para forçar o FutureBuilder a recarregar
-              // Nota: Em um app maior, um State Management como Provider ou Riverpod
-              // seria mais adequado para notificar a HabitListScreen a recarregar seus dados.
-              // Para este exemplo, basta que a MainScreen se reconstrua.
-            });
-          } else if (result == true && _selectedIndex == 1) {
-            setState(() {
-              // Similarmente, reconstruir a aba de progresso se estiver nela
-            });
+          // Após o retorno do HabitFormScreen, tentamos forçar um refresh
+          // da tela atualmente selecionada, se ela tiver um método para isso.
+          // Isso é um pouco mais complexo de fazer diretamente daqui sem um
+          // gerenciador de estado ou GlobalKeys.
+          // A maneira mais simples é que as telas de lista (HabitListScreen, HabitProgressListScreen)
+          // recarreguem seus dados no initState e tenham um botão de refresh.
+          if (mounted && (_selectedIndex == 0 || _selectedIndex == 1)) {
+             // Tentativa de "notificar" a tela para recarregar.
+             // A forma mais simples é reconstruir o MainScreen, o que pode não ser ideal.
+             // Idealmente, HabitListScreen e HabitProgressListScreen teriam um método
+             // que poderia ser chamado via GlobalKey, ou usariam um provider.
+             // Para este exemplo, vamos apenas reconstruir o MainScreen para forçar
+             // a reconstrução das telas filhas.
+            setState(() {});
           }
         },
-        child: const Icon(Icons.add),
-        backgroundColor: Theme.of(context).colorScheme.primary, // Cor do FAB
-        foregroundColor:
-            Theme.of(context).colorScheme.onPrimary, // Cor do ícone no FAB
-        shape: RoundedRectangleBorder(
-          // Forma do FAB, exemplo como na imagem
-          borderRadius: BorderRadius.circular(
-            16.0,
-          ), // Ajuste o raio para a forma desejada
+        child: const Icon(Icons.add_rounded),
+        backgroundColor: Theme.of(context).colorScheme.tertiaryContainer, // Cor M3 para FAB grande
+        foregroundColor: Theme.of(context).colorScheme.onTertiaryContainer,
+        shape: RoundedRectangleBorder( // Forma "Squircle"
+          borderRadius: BorderRadius.circular(28.0), // Raio típico para FAB.large squircle
         ),
+        elevation: 4.0, // Sombra padrão do FAB
       ),
-      floatingActionButtonLocation:
-          FloatingActionButtonLocation
-              .endFloat, // Posição do FAB agora na lateral
+      // floatingActionButtonLocation: FloatingActionButtonLocation.endFloat, // Padrão já é bom
     );
   }
 }

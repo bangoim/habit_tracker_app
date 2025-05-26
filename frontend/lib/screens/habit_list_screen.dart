@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/habit.dart';
 import '../models/category_model.dart';
-import 'package:frontend/screens/habit_form_screen.dart'; // Importa HabitFormScreen
+import 'package:frontend/screens/habit_form_screen.dart';
 
 class HabitListScreen extends StatefulWidget {
   const HabitListScreen({super.key});
@@ -18,8 +18,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
   List<CategoryModel> _categoriesInUseForFilter = [];
   int? _selectedCategoryIdFilter;
 
-  final String _baseUrl =
-      'http://10.0.2.2:5000'; // Ajuste este IP se necessário
+  final String _baseUrl = 'http://10.0.2.2:5000';
 
   @override
   void initState() {
@@ -27,17 +26,20 @@ class _HabitListScreenState extends State<HabitListScreen> {
     _loadAllHabitsAndSetupFilters();
   }
 
+  // Adicionado para permitir que MainScreen force um refresh
+  void refreshHabits() {
+    _loadAllHabitsAndSetupFilters();
+  }
+
+
   Future<void> _loadAllHabitsAndSetupFilters() async {
     if (!mounted) return;
-
     setState(() {
       _selectedCategoryIdFilter = null;
       _futureDisplayedHabits = fetchHabits(categoryId: null);
     });
-
     try {
       final List<Habit>? allHabits = await _futureDisplayedHabits;
-
       if (allHabits != null && mounted) {
         Set<CategoryModel> usedCategoriesSet = {};
         for (var habit in allHabits) {
@@ -46,9 +48,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
           }
         }
         List<CategoryModel> sortedUsedCategories = usedCategoriesSet.toList();
-        // CORREÇÃO AQUI: De sortedUsedUsedCategories para sortedUsedCategories
         sortedUsedCategories.sort((a, b) => a.name.compareTo(b.name));
-
         setState(() {
           _categoriesInUseForFilter = sortedUsedCategories;
         });
@@ -58,12 +58,10 @@ class _HabitListScreenState extends State<HabitListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Erro ao carregar e configurar filtros: $e')),
         );
-        if (mounted) {
-          setState(() {
-            _categoriesInUseForFilter = [];
-            _futureDisplayedHabits = Future.value([]);
-          });
-        }
+        setState(() {
+          _categoriesInUseForFilter = [];
+          _futureDisplayedHabits = Future.value([]);
+        });
       }
     }
   }
@@ -81,7 +79,6 @@ class _HabitListScreenState extends State<HabitListScreen> {
     if (categoryId != null) {
       apiUrl += '?category_id=$categoryId';
     }
-
     try {
       final response = await http.get(Uri.parse(apiUrl));
       if (response.statusCode == 200) {
@@ -127,7 +124,7 @@ class _HabitListScreenState extends State<HabitListScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Hábito já registrado para hoje!')),
         );
-         _refreshDataAfterModification(); // Atualiza mesmo em caso de 409 para refletir o estado do backend
+        _refreshDataAfterModification();
       } else {
         final errorData = jsonDecode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -146,6 +143,21 @@ class _HabitListScreenState extends State<HabitListScreen> {
   Future<void> _showQuantityDialog(Habit habit) async {
     TextEditingController quantityController = TextEditingController();
     final formKeyDialog = GlobalKey<FormState>();
+    int currentAmount = habit.currentPeriodQuantity ?? 0;
+    int targetAmount = habit.targetQuantity ?? 0;
+    int maxAddable = 0;
+    bool canAddMore = true;
+
+    if (habit.targetQuantity != null && habit.targetQuantity! > 0) {
+      maxAddable = targetAmount - currentAmount;
+      if (maxAddable <= 0) {
+        canAddMore = false;
+        maxAddable = 0;
+      }
+    } else {
+      canAddMore = true;
+    }
+
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -161,17 +173,24 @@ class _HabitListScreenState extends State<HabitListScreen> {
                     controller: quantityController,
                     keyboardType: TextInputType.number,
                     decoration: InputDecoration(
-                      labelText:
-                          habit.completionMethod == 'quantity'
-                              ? 'Quantidade realizada'
-                              : 'Minutos realizados',
+                      labelText: habit.completionMethod == 'quantity'
+                          ? 'Quantidade a adicionar'
+                          : 'Minutos a adicionar',
+                      helperText: canAddMore && habit.targetQuantity != null
+                          ? (maxAddable > 0
+                              ? 'Faltam $maxAddable para a meta.'
+                              : 'Meta já atingida.')
+                          : (habit.targetQuantity == null
+                              ? 'Sem meta definida.'
+                              : null),
                     ),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
                         return 'Por favor, insira um valor';
                       }
-                      if (int.tryParse(value) == null || int.parse(value) <= 0) {
-                        return 'Por favor, insira um número positivo válido';
+                      final int? enteredQuantity = int.tryParse(value);
+                      if (enteredQuantity == null || enteredQuantity <= 0) {
+                        return 'Insira um número positivo válido';
                       }
                       return null;
                     },
@@ -189,11 +208,44 @@ class _HabitListScreenState extends State<HabitListScreen> {
               child: const Text('Registrar'),
               onPressed: () {
                 if (formKeyDialog.currentState!.validate()) {
-                  _recordHabitCompletion(
-                    habit.id,
-                    habit.completionMethod,
-                    quantityCompleted: int.parse(quantityController.text),
-                  );
+                  int quantityEntered = int.parse(quantityController.text);
+                  int quantityToRecord = quantityEntered;
+
+                  if (habit.targetQuantity != null &&
+                      habit.targetQuantity! > 0) {
+                    if (currentAmount < targetAmount) {
+                      int neededToComplete = targetAmount - currentAmount;
+                      if (quantityEntered > neededToComplete) {
+                        quantityToRecord = neededToComplete;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                content: Text(
+                                    'Valor ajustado para $quantityToRecord para atingir a meta.')));
+                          }
+                        });
+                      }
+                    } else {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                  content: Text(
+                                      'Meta já atingida. Nenhum valor adicional registrado.')));
+                        }
+                      });
+                      Navigator.of(context).pop();
+                      return;
+                    }
+                  }
+
+                  if (quantityToRecord > 0) {
+                    _recordHabitCompletion(
+                      habit.id,
+                      habit.completionMethod,
+                      quantityCompleted: quantityToRecord,
+                    );
+                  }
                   Navigator.of(context).pop();
                 }
               },
@@ -208,24 +260,23 @@ class _HabitListScreenState extends State<HabitListScreen> {
     final String apiUrl = '$_baseUrl/habits/$habitId';
     bool? confirmDelete = await showDialog<bool>(
       context: context,
-      builder:
-          (BuildContext context) => AlertDialog(
-            title: const Text('Confirmar Exclusão'),
-            content: const Text(
-              'Tem certeza de que deseja excluir este hábito? Todos os registros relacionados serão apagados.',
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancelar'),
-              ),
-              TextButton(
-                style: TextButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Excluir'),
-              ),
-            ],
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Confirmar Exclusão'),
+        content: const Text(
+            'Tem certeza de que deseja excluir este hábito? Todos os registros relacionados serão apagados.'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
           ),
+          TextButton(
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Excluir'),
+          ),
+        ],
+      ),
     );
     if (confirmDelete == true && mounted) {
       try {
@@ -248,7 +299,6 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
-  // NOVA FUNÇÃO ADICIONADA
   Future<void> _undoTodayRecord(int habitId) async {
     bool? confirm = await showDialog<bool>(
       context: context,
@@ -276,19 +326,19 @@ class _HabitListScreenState extends State<HabitListScreen> {
     final String apiUrl = '$_baseUrl/habit_records/today?habit_id=$habitId';
     try {
       final response = await http.delete(Uri.parse(apiUrl));
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  jsonDecode(response.body)['message'] ?? 'Registro de hoje limpo com sucesso!')),
+              content: Text(jsonDecode(response.body)['message'] ??
+                  'Registro de hoje limpo com sucesso!')),
         );
         _refreshDataAfterModification();
       } else {
         final errorData = jsonDecode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Erro ao limpar registro: ${errorData['error'] ?? response.body}')),
+              content: Text(
+                  'Erro ao limpar registro: ${errorData['error'] ?? response.body}')),
         );
       }
     } catch (e) {
@@ -298,48 +348,23 @@ class _HabitListScreenState extends State<HabitListScreen> {
     }
   }
 
-
-  Widget _buildTargetText(Habit habit) {
-    if (habit.targetQuantity != null) {
-      return Text(
-        'Alvo: ${habit.targetQuantity} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
-        style: TextStyle(
-          fontSize: 14,
-          color: Theme.of(
-            context,
-          ).colorScheme.onSurfaceVariant.withOpacity(0.8),
-        ),
-      );
-    } else if (habit.targetDaysPerWeek != null) {
-      return Text(
-        'Alvo: ${habit.targetDaysPerWeek} dias no período',
-        style: TextStyle(
-          fontSize: 14,
-          color: Theme.of(
-            context,
-          ).colorScheme.onSurfaceVariant.withOpacity(0.8),
-        ),
-      );
-    }
-    return const SizedBox.shrink();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Meus Hábitos'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadAllHabitsAndSetupFilters,
+      body: CustomScrollView(
+        slivers: <Widget>[
+          SliverAppBar.large(
+            title: const Text('Meus Hábitos'),
+            expandedHeight: 120.0, // Reduzido para diminuir o espaço do título
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                onPressed: _loadAllHabitsAndSetupFilters,
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          if (_futureDisplayedHabits != null)
-            Padding(
+          SliverToBoxAdapter(
+            child: _futureDisplayedHabits != null ? Padding(
               padding: const EdgeInsets.symmetric(
                 vertical: 8.0,
                 horizontal: 4.0,
@@ -354,47 +379,34 @@ class _HabitListScreenState extends State<HabitListScreen> {
                         label: Text(
                           'Todas',
                           style: TextStyle(
-                            color:
-                                _selectedCategoryIdFilter == null
-                                    ? Theme.of(
-                                      context,
-                                    ).colorScheme.onPrimaryContainer
-                                    : Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
+                            color: _selectedCategoryIdFilter == null
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                           ),
                         ),
                         selected: _selectedCategoryIdFilter == null,
                         onSelected: (bool selected) {
                           _filterHabitsBy(categoryId: null);
                         },
-                        checkmarkColor:
-                            _selectedCategoryIdFilter == null
-                                ? Theme.of(
-                                  context,
-                                ).colorScheme.onPrimaryContainer
-                                : null,
-                        selectedColor:
-                            _selectedCategoryIdFilter == null
-                                ? Theme.of(context).colorScheme.primaryContainer
-                                : null,
+                        checkmarkColor: _selectedCategoryIdFilter == null
+                            ? Theme.of(context).colorScheme.onPrimaryContainer
+                            : null,
+                        selectedColor: _selectedCategoryIdFilter == null
+                            ? Theme.of(context).colorScheme.primaryContainer
+                            : null,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(
-                            8.0,
-                          ), // Mais arredondado
+                          borderRadius: BorderRadius.circular(8.0),
                           side: BorderSide(
-                            color:
-                                _selectedCategoryIdFilter == null
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Theme.of(
-                                      context,
-                                    ).colorScheme.outlineVariant,
+                            color: _selectedCategoryIdFilter == null
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.outlineVariant,
                           ),
                         ),
-                        backgroundColor:
-                            Theme.of(
-                              context,
-                            ).colorScheme.surface, // Fundo do chip
+                        backgroundColor: Theme.of(context).colorScheme.surface,
                       ),
                     ),
                     ..._categoriesInUseForFilter.map((category) {
@@ -406,14 +418,13 @@ class _HabitListScreenState extends State<HabitListScreen> {
                           label: Text(
                             category.name,
                             style: TextStyle(
-                              color:
-                                  isSelected
-                                      ? Theme.of(
-                                        context,
-                                      ).colorScheme.onPrimaryContainer
-                                      : Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
+                              color: isSelected
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .onPrimaryContainer
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
                             ),
                           ),
                           selected: isSelected,
@@ -422,337 +433,310 @@ class _HabitListScreenState extends State<HabitListScreen> {
                               categoryId: selected ? category.id : null,
                             );
                           },
-                          checkmarkColor:
-                              isSelected
-                                  ? Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimaryContainer
-                                  : null,
-                          selectedColor:
-                              isSelected
-                                  ? Theme.of(
-                                    context,
-                                  ).colorScheme.primaryContainer
-                                  : null,
+                          checkmarkColor: isSelected
+                              ? Theme.of(context).colorScheme.onPrimaryContainer
+                              : null,
+                          selectedColor: isSelected
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : null,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              8.0,
-                            ), // Mais arredondado
+                            borderRadius: BorderRadius.circular(8.0),
                             side: BorderSide(
-                              color:
-                                  isSelected
-                                      ? Theme.of(context).colorScheme.primary
-                                      : Theme.of(
-                                        context,
-                                      ).colorScheme.outlineVariant,
+                              color: isSelected
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Theme.of(context).colorScheme.outlineVariant,
                             ),
                           ),
-                          backgroundColor:
-                              Theme.of(
-                                context,
-                              ).colorScheme.surface, // Fundo do chip
+                          backgroundColor: Theme.of(context).colorScheme.surface,
                         ),
                       );
                     }).toList(),
                   ],
                 ),
               ),
-            ),
-          Expanded(
-            child: FutureBuilder<List<Habit>>(
-              future: _futureDisplayedHabits,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                } else if (snapshot.hasError) {
-                  return Center(
+            ) : const SizedBox.shrink(),
+          ),
+          FutureBuilder<List<Habit>>(
+            future: _futureDisplayedHabits,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const SliverFillRemaining(child: Center(child: CircularProgressIndicator()));
+              } else if (snapshot.hasError) {
+                return SliverFillRemaining(
+                  child: Center(
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
                         'Erro ao carregar hábitos: ${snapshot.error}\nPor favor, tente atualizar.',
                       ),
                     ),
-                  );
-                } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Center(child: Text('Nenhum hábito encontrado.'));
-                } else {
-                  final habits = snapshot.data!;
-                  return ListView.builder(
-                    padding: const EdgeInsets.only(
-                      bottom: 0,
-                      top: 0,
-                      left: 8.0,
-                      right: 8.0,
-                    ),
-                    itemCount: habits.length,
-                    itemBuilder: (context, index) {
+                  ),
+                );
+              } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                return const SliverFillRemaining(child: Center(child: Text('Nenhum hábito encontrado.')));
+              } else {
+                final habits = snapshot.data!;
+                return SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
                       Habit habit = habits[index];
-
-                      // Lógica para determinar se o botão principal está desabilitado para TAP
+                      bool isQuantitative = habit.completionMethod == 'quantity' ||
+                                          habit.completionMethod == 'minutes';
+                      bool isBoolean = habit.completionMethod == 'boolean';
+                      bool isTargetMet = false;
+                      double progressFraction = 0.0;
+                      bool hasTargetAndIsQuantitative = false;
+                      IconData mainButtonIcon;
+                      Color mainButtonContainerColor;
+                      Color mainButtonIconColor;
                       bool disableMainButtonTap;
-                      if (habit.completionMethod == 'boolean') {
-                        disableMainButtonTap = habit.isCompletedToday;
-                      } else { // 'quantity' ou 'minutes'
-                        disableMainButtonTap = false; // Sempre permite TAP para adicionar mais
-                      }
 
-                      // Lógica para aparência visual de "completo"
-                      bool isConsideredVisuallyComplete = habit.isCompletedToday;
-                      IconData mainButtonIcon = Icons.check_rounded;
+                      if (isQuantitative) {
+                        if (habit.targetQuantity != null && habit.targetQuantity! > 0) {
+                          hasTargetAndIsQuantitative = true;
+                          isTargetMet = (habit.currentPeriodQuantity ?? 0) >= habit.targetQuantity!;
+                          progressFraction = (habit.currentPeriodQuantity ?? 0).toDouble() / habit.targetQuantity!.toDouble();
+                          progressFraction = progressFraction.clamp(0.0, 1.0);
+                        } else {
+                           hasTargetAndIsQuantitative = false;
+                           isTargetMet = false;
+                        }
 
-                      if (habit.completionMethod == 'quantity' || habit.completionMethod == 'minutes') {
-                        final bool targetExists = habit.targetQuantity != null && habit.targetQuantity! > 0;
-                        final bool hasProgress = habit.currentPeriodQuantity != null && habit.currentPeriodQuantity! > 0;
-
-                        if (targetExists) { // Se existe uma meta
-                           isConsideredVisuallyComplete = (habit.currentPeriodQuantity ?? 0) >= habit.targetQuantity!;
-                           if (hasProgress && !isConsideredVisuallyComplete) {
-                             mainButtonIcon = Icons.add_circle_outline; // Meta não atingida, mas tem progresso
-                           } else if (!hasProgress) {
-                             mainButtonIcon = Icons.check_rounded; // Sem progresso ainda, ícone de check
-                           } else {
-                             mainButtonIcon = Icons.check_rounded; // Meta atingida
-                           }
-                        } else if (hasProgress) { // Sem meta, mas com progresso
-                           isConsideredVisuallyComplete = true; // Considera visualmente completo
-                           mainButtonIcon = Icons.check_rounded;
-                        } else { // Sem meta e sem progresso
-                           isConsideredVisuallyComplete = false;
-                           mainButtonIcon = Icons.check_rounded;
+                        if (isTargetMet) {
+                          mainButtonIcon = Icons.check_rounded;
+                          mainButtonContainerColor = Theme.of(context).colorScheme.surfaceContainerLowest;
+                          mainButtonIconColor = Theme.of(context).colorScheme.primary;
+                          disableMainButtonTap = true;
+                        } else {
+                          mainButtonIcon = Icons.add_rounded;
+                          mainButtonContainerColor = Theme.of(context).colorScheme.primaryContainer;
+                          mainButtonIconColor = Theme.of(context).colorScheme.onPrimaryContainer;
+                          disableMainButtonTap = false;
+                        }
+                      } else {
+                        isTargetMet = habit.isCompletedToday;
+                        mainButtonIcon = Icons.check_rounded;
+                        if (habit.isCompletedToday) {
+                          mainButtonContainerColor = Theme.of(context).colorScheme.surfaceContainerHighest;
+                          mainButtonIconColor = Theme.of(context).colorScheme.onSurfaceVariant;
+                          progressFraction = 1.0;
+                          disableMainButtonTap = true;
+                        } else {
+                          mainButtonContainerColor = Theme.of(context).colorScheme.primaryContainer;
+                          mainButtonIconColor = Theme.of(context).colorScheme.onPrimaryContainer;
+                          progressFraction = 0.0;
+                          disableMainButtonTap = false;
                         }
                       }
 
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(vertical: 6.0),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        elevation: 2,
-                        color: Theme.of(context).colorScheme.surfaceVariant,
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            top: 16.0,
-                            left: 16.0,
-                            right: 16.0,
-                            bottom: 8.0,
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 0),
+                        child: Card(
+                          margin: const EdgeInsets.symmetric(vertical: 6.0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
                           ),
-                          child: Stack(
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                          elevation: 2,
+                          clipBehavior: Clip.antiAlias,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final cardWidth = constraints.maxWidth;
+                              final progressBarWidth = cardWidth * progressFraction;
+                              final Color progressColor = Theme.of(context).colorScheme.primary.withOpacity(0.25);
+
+                              return Stack(
                                 children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 56.0),
-                                    child: Text(
-                                      habit.name,
-                                      style: TextStyle(
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.bold,
-                                        color:
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  if (habit.categories.isNotEmpty)
-                                    Wrap(
-                                      spacing: 4.0,
-                                      runSpacing: 0.0,
-                                      children:
-                                          habit.categories
-                                              .map(
-                                                (cat) => Chip(
-                                                  label: Text(cat.name),
-                                                  padding: EdgeInsets.zero,
-                                                  labelPadding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 6.0,
-                                                      ),
-                                                  visualDensity:
-                                                      VisualDensity.compact,
-                                                  labelStyle: TextStyle(
-                                                    fontSize: 10,
-                                                    color: Theme.of(context)
-                                                        .colorScheme
-                                                        .onSurfaceVariant
-                                                        .withOpacity(0.8),
-                                                  ),
-                                                  materialTapTargetSize:
-                                                      MaterialTapTargetSize
-                                                          .shrinkWrap,
-                                                  backgroundColor:
-                                                      Theme.of(
-                                                        context,
-                                                      ).colorScheme.background,
-                                                  side: BorderSide(
-                                                    color:
-                                                        Theme.of(context)
-                                                            .colorScheme
-                                                            .outlineVariant,
-                                                  ),
-                                                ),
-                                              )
-                                              .toList(),
-                                    ),
-                                  const SizedBox(height: 8),
-                                  _buildTargetText(habit),
-                                  const SizedBox(height: 4),
-                                  if (habit.completionMethod == 'quantity' ||
-                                      habit.completionMethod == 'minutes')
-                                    Text(
-                                      'Progresso: ${habit.currentPeriodQuantity ?? 0} de ${habit.targetQuantity ?? 'N/A'} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withOpacity(0.8),
-                                      ),
-                                    )
-                                  else if (habit.countMethod == 'weekly' ||
-                                      habit.countMethod == 'monthly')
-                                    Text(
-                                      'Progresso: ${habit.currentPeriodDaysCompleted ?? 0} de ${habit.targetDaysPerWeek ?? 'N/A'} dias',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant
-                                            .withOpacity(0.8),
-                                      ),
-                                    )
-                                  else
-                                    const SizedBox.shrink(),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Streak: ${habit.currentStreak} dias',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant
-                                          .withOpacity(0.8),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                ],
-                              ),
-                              Positioned(
-                                top: 1,
-                                right: 1,
-                                child: Material(
-                                  color:
-                                      isConsideredVisuallyComplete
-                                          ? Theme.of(
-                                            context,
-                                          ).colorScheme.surfaceContainerHighest // Cor de "completo" ou "meta atingida"
-                                          : Theme.of(
-                                            context,
-                                          ).colorScheme.primaryContainer, // Cor "ativo para registrar/adicionar"
-                                  borderRadius: BorderRadius.circular(12.0),
-                                  elevation: disableMainButtonTap ? 0 : 2, //MODIFICADO
-                                  child: InkWell(
-                                    borderRadius: BorderRadius.circular(12.0),
-                                    onTap: disableMainButtonTap //MODIFICADO
-                                        ? null
-                                        : () {
-                                          if (habit.completionMethod ==
-                                                  'quantity' ||
-                                              habit.completionMethod ==
-                                                  'minutes') {
-                                            _showQuantityDialog(habit);
-                                          } else {
-                                            _recordHabitCompletion(
-                                              habit.id,
-                                              habit.completionMethod,
-                                            );
-                                          }
-                                        },
-                                    child: Container(
-                                      width: 55,
-                                      height: 55,
-                                      alignment: Alignment.center,
-                                      child: Icon(
-                                        mainButtonIcon, //MODIFICADO
-                                        size: 26.0,
-                                        color:
-                                            isConsideredVisuallyComplete
-                                                ? Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurfaceVariant
-                                                : Theme.of(context)
-                                                    .colorScheme
-                                                    .onPrimaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                right: 4,
-                                child: PopupMenuButton<String>(
-                                  icon: Icon(
-                                    Icons.more_vert,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withOpacity(0.7),
-                                    size: 26,
-                                  ),
-                                  offset: const Offset(0, 30),
-                                  onSelected: (value) async {
-                                    if (value == 'edit') {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder:
-                                              (context) =>
-                                                  HabitFormScreen(habit: habit),
+                                  if (hasTargetAndIsQuantitative || isBoolean)
+                                    Positioned.fill(
+                                      child: Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: Container(
+                                          width: progressBarWidth,
+                                          decoration: BoxDecoration(
+                                            color: progressColor,
+                                          ),
                                         ),
-                                      ).then((result) {
-                                        if (result == true) {
-                                          _refreshDataAfterModification();
+                                      ),
+                                    ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 16.0, left: 16.0, right: 16.0, bottom: 8.0,
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.only(right: 60.0),
+                                          child: Text(
+                                            habit.name,
+                                            style: TextStyle(
+                                              fontSize: 22, fontWeight: FontWeight.bold,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                            ),
+                                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        if (habit.categories.isNotEmpty)
+                                          Wrap(
+                                            spacing: 4.0, runSpacing: 0.0,
+                                            children: habit.categories.map((cat) => Chip(
+                                              label: Text(cat.name), padding: EdgeInsets.zero,
+                                              labelPadding: const EdgeInsets.symmetric(horizontal: 6.0),
+                                              visualDensity: VisualDensity.compact,
+                                              labelStyle: TextStyle(
+                                                fontSize: 10,
+                                                color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                                              ),
+                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                              backgroundColor: Theme.of(context).colorScheme.background,
+                                              side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+                                            )).toList(),
+                                          ),
+                                        const SizedBox(height: 8),
+                                        if (isQuantitative)
+                                          Text(
+                                            'Progresso: ${habit.currentPeriodQuantity ?? 0}${hasTargetAndIsQuantitative ? " de ${habit.targetQuantity}" : ""} ${habit.completionMethod == 'minutes' ? 'min' : 'x'}',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                                            ),
+                                          )
+                                        else if (isBoolean && habit.isCompletedToday)
+                                           Text(
+                                            'Completo hoje!',
+                                            style: TextStyle(
+                                              fontSize: 14, color: Theme.of(context).colorScheme.primary,
+                                              fontWeight: FontWeight.w500
+                                            ),
+                                          )
+                                        else if (isBoolean && !habit.isCompletedToday)
+                                          Text(
+                                            'Pendente',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                                            ),
+                                          )
+                                        else if (habit.countMethod == 'weekly' || habit.countMethod == 'monthly')
+                                           Text(
+                                            'Progresso: ${habit.currentPeriodDaysCompleted ?? 0} de ${habit.targetDaysPerWeek ?? 'N/A'} dias',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                                            ),
+                                          ),
+                                        const SizedBox(height: 4),
+                                        if (habit.currentStreak > 0)
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                Icons.local_fire_department_rounded,
+                                                color: Colors.orangeAccent,
+                                                size: 18,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                '${habit.currentStreak} ${habit.currentStreak == 1 ? "dia" : "dias"}',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.8),
+                                                ),
+                                              ),
+                                            ],
+                                          )
+                                        else
+                                          const SizedBox(height: 18),
+                                        const SizedBox(height: 10),
+                                      ],
+                                    ),
+                                  ),
+                                  Positioned(
+                                    top: 12, right: 12,
+                                    child: Material(
+                                      color: mainButtonContainerColor,
+                                      borderRadius: BorderRadius.circular(12.0),
+                                      elevation: disableMainButtonTap ? 0 : 2,
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(12.0),
+                                        onTap: disableMainButtonTap
+                                            ? null
+                                            : () {
+                                                if (isQuantitative) {
+                                                  _showQuantityDialog(habit);
+                                                } else {
+                                                  _recordHabitCompletion(habit.id, habit.completionMethod);
+                                                }
+                                              },
+                                        child: Container(
+                                          width: 55, height: 55,
+                                          alignment: Alignment.center,
+                                          child: Icon(
+                                            mainButtonIcon,
+                                            size: 26.0,
+                                            color: mainButtonIconColor,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 8, right: 8,
+                                    child: PopupMenuButton<String>(
+                                      icon: Icon(
+                                        Icons.more_vert,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+                                        size: 26,
+                                      ),
+                                      offset: const Offset(0, 30),
+                                      onSelected: (value) async {
+                                        if (value == 'edit') {
+                                          final result = await Navigator.push( // Adicionado await e result
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) => HabitFormScreen(habit: habit),
+                                            ),
+                                          );
+                                          if (result == true && mounted) { // Adicionado mounted check
+                                            _refreshDataAfterModification();
+                                          }
+                                        } else if (value == 'delete') {
+                                          _deleteHabit(habit.id);
+                                        } else if (value == 'undo_today') {
+                                          _undoTodayRecord(habit.id);
                                         }
-                                      });
-                                    } else if (value == 'delete') {
-                                      _deleteHabit(habit.id);
-                                    } else if (value == 'undo_today') { //NOVO CASO
-                                      _undoTodayRecord(habit.id);
-                                    }
-                                  },
-                                  itemBuilder:
-                                      (BuildContext context) =>
+                                      },
+                                      itemBuilder: (BuildContext context) =>
                                           <PopupMenuEntry<String>>[
-                                            const PopupMenuItem<String>(
-                                              value: 'edit',
-                                              child: Text('Editar'),
-                                            ),
-                                            const PopupMenuItem<String>( //NOVA OPÇÃO
-                                              value: 'undo_today',
-                                              child: Text('Limpar registro de hoje'),
-                                            ),
-                                            const PopupMenuItem<String>(
-                                              value: 'delete',
-                                              child: Text('Excluir'),
-                                            ),
-                                          ],
-                                ),
-                              ),
-                            ],
+                                        const PopupMenuItem<String>(
+                                          value: 'edit',
+                                          child: Text('Editar'),
+                                        ),
+                                        const PopupMenuItem<String>(
+                                          value: 'undo_today',
+                                          child: Text('Limpar registro de hoje'),
+                                        ),
+                                        const PopupMenuItem<String>(
+                                          value: 'delete',
+                                          child: Text('Excluir'),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                       );
                     },
-                  );
-                }
-              },
-            ),
+                    childCount: habits.length,
+                  ),
+                );
+              }
+            },
           ),
         ],
       ),
