@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 // são usadas em OverallProgressScreen, que foi movida para cá.
 // Se OverallProgressScreen for separada novamente, essas importações
 // podem ser movidas para o arquivo dela.
-import 'package:http/http.dart'
-    as http;
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:flutter_heatmap_calendar/flutter_heatmap_calendar.dart';
 
@@ -49,8 +48,7 @@ class OverallProgressScreen extends StatefulWidget {
 }
 
 class _OverallProgressScreenState extends State<OverallProgressScreen> {
-  final String _baseUrl =
-      'http://10.0.2.2:5000';
+  final String _baseUrl = 'http://10.0.2.2:5000';
   Map<DateTime, int> _overallDatasets = {};
   bool _isLoadingOverallProgress = true;
   String? _overallErrorMessage;
@@ -93,9 +91,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
             recordDate.month,
             recordDate.day,
           );
-          int quantity =
-              json['quantity_completed'] as int? ??
-              1;
+          int quantity = json['quantity_completed'] as int? ?? 1;
 
           aggregatedDatasets[normalizedDate] =
               (aggregatedDatasets[normalizedDate] ?? 0) + quantity;
@@ -133,10 +129,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
     Color githubMediumGreen = Colors.green.shade500;
     Color githubDarkGreen = Colors.green.shade800;
     Color githubVeryDarkGreen = Colors.green.shade900;
-    Color defaultDayColor =
-        Colors
-            .grey
-            .shade300;
+    Color defaultDayColor = Colors.grey.shade300;
 
     final DateTime heatmapStartDate = DateTime(
       DateTime.now().year - 1,
@@ -146,13 +139,14 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
     final DateTime heatmapEndDate = DateTime.now();
 
     return Scaffold(
-      backgroundColor:
-          Theme.of(
-            context,
-          ).colorScheme.surface,
-      appBar: AppBar( // AppBar normal para esta tela
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        // AppBar normal para esta tela
         title: const Text('Progresso Geral'),
-        backgroundColor: Theme.of(context).colorScheme.surfaceVariant, // Cor de fundo para AppBar normal
+        backgroundColor:
+            Theme.of(
+              context,
+            ).colorScheme.surfaceVariant, // Cor de fundo para AppBar normal
         foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
         elevation: 0,
         centerTitle: true,
@@ -176,19 +170,13 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
               children: [
                 const Text(
                   'Visão Geral',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(12.0),
                   decoration: BoxDecoration(
-                    color:
-                        Theme.of(context)
-                            .colorScheme
-                            .surfaceVariant,
+                    color: Theme.of(context).colorScheme.surfaceVariant,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -219,7 +207,10 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
             child: Text(
               'Atividade Diária (Todos os Hábitos)',
               style: TextStyle(
@@ -261,9 +252,7 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                           6: githubVeryDarkGreen,
                         },
                         defaultColor: defaultDayColor,
-                        textColor:
-                            Colors
-                                .black87,
+                        textColor: Colors.black87,
                         size: 14,
                         margin: const EdgeInsets.all(2),
                         borderRadius: 2,
@@ -271,11 +260,41 @@ class _OverallProgressScreenState extends State<OverallProgressScreen> {
                         showText: false,
                         showColorTip: true,
                         colorTipHelper: const [
-                          Text('Nenhum', style: TextStyle(color: Colors.black87, fontSize: 10)),
-                          Text('Pouco', style: TextStyle(color: Colors.black87, fontSize: 10)),
-                          Text('Médio', style: TextStyle(color: Colors.black87, fontSize: 10)),
-                          Text('Muito', style: TextStyle(color: Colors.black87, fontSize: 10)),
-                          Text('Mais', style: TextStyle(color: Colors.black87, fontSize: 10)),
+                          Text(
+                            'Nenhum',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Pouco',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Médio',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Muito',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            'Mais',
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontSize: 10,
+                            ),
+                          ),
                         ],
                         onClick: (date) {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -305,14 +324,21 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
 
-  // As telas agora são instanciadas diretamente aqui para simplificar,
-  // mas em um app maior, você poderia usar chaves globais para
-  // chamar métodos de refresh nelas, se necessário.
-  static final List<Widget> _widgetOptions = <Widget>[
-    const HabitListScreen(),
-    const HabitProgressListScreen(),
-    const OverallProgressScreen(), // Adicionando a terceira tela
-  ];
+  final GlobalKey<HabitListScreenState> _habitListKey =
+      GlobalKey<HabitListScreenState>();
+
+  late final List<Widget> _widgetOptions;
+
+  @override
+  void initState() {
+    super.initState();
+    // 2. PASSE A CHAVE NA INICIALIZAÇÃO DO WIDGET
+    _widgetOptions = <Widget>[
+      HabitListScreen(key: _habitListKey), // Modifique esta linha
+      const HabitProgressListScreen(),
+      const OverallProgressScreen(),
+    ];
+  }
 
   // Títulos para as AppBars de cada tela
   static const List<String> _appBarTitles = <String>[
@@ -320,7 +346,6 @@ class _MainScreenState extends State<MainScreen> {
     'Progresso dos Hábitos',
     'Visão Geral', // Título para a nova aba
   ];
-
 
   void _onItemTapped(int index) {
     setState(() {
@@ -331,10 +356,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _widgetOptions,
-      ),
+      body: IndexedStack(index: _selectedIndex, children: _widgetOptions),
       bottomNavigationBar: BottomNavigationBar(
         items: const <BottomNavigationBarItem>[
           BottomNavigationBarItem(
@@ -357,49 +379,42 @@ class _MainScreenState extends State<MainScreen> {
         selectedItemColor: Theme.of(context).colorScheme.primary,
         onTap: _onItemTapped,
         backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
-        unselectedItemColor:
-            Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.7),
+        unselectedItemColor: Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant.withOpacity(0.7),
         type: BottomNavigationBarType.fixed,
       ),
       // Condiciona a exibição do FAB
-      floatingActionButton: _selectedIndex == 0 // Exibe o FAB apenas se o índice for 0 (tela "Hábitos")
-          ? FloatingActionButton.large(
-              onPressed: () async {
-                // A navegação para HabitFormScreen deve funcionar como antes
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HabitFormScreen()),
-                );
-                // Para atualizar a HabitListScreen após adicionar um hábito:
-                // A HabitListScreen já tem um _loadAllHabitsAndSetupFilters no initState.
-                // Se a navegação de volta causar um rebuild ou se você tiver um
-                // mecanismo de callback/provider, ela pode se atualizar.
-                // Uma forma simples de tentar forçar um refresh na HabitListScreen
-                // se ela estiver visível (_selectedIndex == 0) é chamar setState aqui,
-                // o que reconstrói o MainScreen e, por consequência, o IndexedStack
-                // pode reconstruir seu filho atual.
-                // No entanto, a melhor prática seria a HabitListScreen escutar
-                // por mudanças ou ser explicitamente atualizada.
-                if (mounted && _selectedIndex == 0) {
-                    // Se HabitListScreen tiver uma GlobalKey e um método de refresh,
-                    // você poderia chamá-lo.
-                    // Ex: habitListScreenKey.currentState?.refreshHabits();
-                    // Por ora, um setState() no MainScreen pode ser suficiente
-                    // se a HabitListScreen se reconstituir adequadamente.
-                    // Como _widgetOptions contém const HabitListScreen(), ela será
-                    // reconstruída se MainScreen for reconstruída.
-                  setState(() {});
-                }
-              },
-              child: const Icon(Icons.add_rounded),
-              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-              foregroundColor: Theme.of(context).colorScheme.onTertiaryContainer,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(28.0),
-              ),
-              elevation: 4.0,
-            )
-          : null, // Não exibe FAB para os outros índices
+      floatingActionButton:
+          _selectedIndex ==
+                  0 // Exibe o FAB apenas se o índice for 0 (tela "Hábitos")
+              ? FloatingActionButton.large(
+                onPressed: () async {
+                  // 1. Navega e aguarda um resultado booleano da tela de formulário.
+                  final result = await Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const HabitFormScreen(),
+                    ),
+                  );
+
+                  // 2. Verifica se o resultado é 'true' (hábito salvo) e se o widget ainda está na tela.
+                  if (result == true && mounted) {
+                    // 3. Chama o método `refreshData` diretamente via GlobalKey.
+                    //    A antiga chamada `setState(() {})` é removida.
+                    _habitListKey.currentState?.refreshData();
+                  }
+                },
+                child: const Icon(Icons.add_rounded),
+                backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                foregroundColor:
+                    Theme.of(context).colorScheme.onTertiaryContainer,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28.0),
+                ),
+                elevation: 4.0,
+              )
+              : null, // Não exibe FAB para os outros índices.
     );
   }
 }

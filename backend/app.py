@@ -10,7 +10,7 @@ app = Flask(__name__)
 # Configurações do Banco de Dados
 app.config["MYSQL_HOST"] = os.environ.get("MYSQL_HOST", "localhost")
 app.config["MYSQL_USER"] = os.environ.get("MYSQL_USER", "root")
-app.config["MYSQL_PASSWORD"] = os.environ.get("MYSQL_PASSWORD", "root")
+app.config["MYSQL_PASSWORD"] = os.environ.get("MYSQL_PASSWORD", "admin")
 app.config["MYSQL_DB"] = os.environ.get("MYSQL_DB", "habit_tracker")
 app.config["MYSQL_CURSORCLASS"] = "DictCursor"
 
@@ -137,58 +137,50 @@ def get_habits():
                 h.target_quantity, h.target_days_per_week, h.created_at,
                 (SELECT COUNT(*) FROM habit_records hr_today WHERE hr_today.habit_id = h.id AND hr_today.record_date = %s) > 0 AS is_completed_today,
                 (SELECT MAX(hr_last.record_date) FROM habit_records hr_last WHERE hr_last.habit_id = h.id) AS last_completed_date,
-                COALESCE((
-                    SELECT SUM(hr_qty.quantity_completed)
-                    FROM habit_records hr_qty
-                    WHERE hr_qty.habit_id = h.id
-                      AND hr_qty.record_date >= %s -- início do período atual
-                      AND hr_qty.record_date <= %s -- data de hoje
-                ), 0) AS current_period_quantity,
-                COALESCE((
-                    SELECT COUNT(DISTINCT hr_days.record_date)
-                    FROM habit_records hr_days
-                    WHERE hr_days.habit_id = h.id
-                      AND hr_days.record_date >= %s -- início do período atual
-                      AND hr_days.record_date <= %s -- data de hoje
-                ), 0) AS current_period_days_completed
+                COALESCE((SELECT SUM(hr_qty.quantity_completed) FROM habit_records hr_qty WHERE hr_qty.habit_id = h.id AND hr_qty.record_date >= %s AND hr_qty.record_date <= %s), 0) AS current_period_quantity,
+                COALESCE((SELECT COUNT(DISTINCT hr_days.record_date) FROM habit_records hr_days WHERE hr_days.habit_id = h.id AND hr_days.record_date >= %s AND hr_days.record_date <= %s), 0) AS current_period_days_completed,
+                GROUP_CONCAT(DISTINCT c.id, ':', c.name SEPARATOR ';') as categories_str
             FROM habits h
+            LEFT JOIN habit_categories hc ON h.id = hc.habit_id
+            LEFT JOIN categories c ON hc.category_id = c.id
         """
 
+        # Parâmetros de data permanecem os mesmos
         query_params_dates = [
             today.isoformat(),
-            start_of_current_period.isoformat(),  # Para current_period_quantity
-            today.isoformat(),  # Para current_period_quantity
-            start_of_current_period.isoformat(),  # Para current_period_days_completed
-            today.isoformat(),  # Para current_period_days_completed
+            start_of_current_period.isoformat(), today.isoformat(),
+            start_of_current_period.isoformat(), today.isoformat(),
         ]
 
-        filter_category_id = request.args.get("category_id", type=int)
         final_query_params = list(query_params_dates)
+        filter_clause = ""
+
+        filter_category_id = request.args.get("category_id", type=int)
 
         if filter_category_id:
-            base_query += """
-                JOIN habit_categories hc ON h.id = hc.habit_id
-                WHERE hc.category_id = %s
-            """
+            # Usamos uma subquery para não interferir com o GROUP BY principal
+            filter_clause = " WHERE h.id IN (SELECT habit_id FROM habit_categories WHERE category_id = %s)"
             final_query_params.append(filter_category_id)
 
-        base_query += " ORDER BY h.created_at DESC"
+        # Adicionamos a cláusula GROUP BY aqui
+        group_and_order_clause = " GROUP BY h.id ORDER BY h.created_at DESC"
 
-        cursor.execute(base_query, tuple(final_query_params))
+        final_query = base_query + filter_clause + group_and_order_clause
+
+        cursor.execute(final_query, tuple(final_query_params))
         habits_results = cursor.fetchall()
 
         for habit in habits_results:
-            cat_cursor = mysql.connection.cursor()
-            cat_cursor.execute(
-                """
-                SELECT c.id, c.name FROM categories c
-                JOIN habit_categories hc ON c.id = hc.category_id
-                WHERE hc.habit_id = %s
-            """,
-                (habit["id"],),
-            )
-            habit["categories"] = cat_cursor.fetchall()
-            cat_cursor.close()
+            habit["categories"] = []
+            if habit.get("categories_str"):
+                cat_list = habit["categories_str"].split(';')
+                for cat_item in cat_list:
+                    cat_id, cat_name = cat_item.split(':', 1)
+                    habit["categories"].append({"id": int(cat_id), "name": cat_name})
+            del habit["categories_str"]  # Remove o campo auxiliar da resposta final
+
+
+
 
             streak_cursor = mysql.connection.cursor()
             if habit["completion_method"] == "boolean":

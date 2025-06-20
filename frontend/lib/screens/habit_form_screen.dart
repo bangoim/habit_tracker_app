@@ -1,4 +1,3 @@
-// frontend/lib/screens/habit_form_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
@@ -6,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:frontend/models/habit.dart';
 import 'package:frontend/models/category_model.dart';
 import 'package:frontend/screens/selection_screen.dart';
+import 'package:frontend/services/category_service.dart';
 
 class HabitFormScreen extends StatefulWidget {
   final Habit? habit;
@@ -46,64 +46,51 @@ class _HabitFormScreenState extends State<HabitFormScreen> {
     'minutes': 'Minutos',
   };
 
+  // DENTRO DA CLASSE _HabitFormScreenState
+
   @override
   void initState() {
     super.initState();
-    _fetchAvailableCategories();
+    // A busca agora é centralizada em um único método.
+    _loadInitialData();
 
+    // O resto do seu initState continua aqui...
     if (widget.habit != null) {
       _nameController.text = widget.habit!.name;
-      _descriptionController.text = widget.habit!.description ?? '';
-      _selectedCountMethod = widget.habit!.countMethod;
-      _selectedCompletionMethod = widget.habit!.completionMethod;
-      _targetQuantityController.text =
-          (widget.habit!.targetQuantity ?? '').toString();
-      _targetDaysPerWeekController.text =
-          (widget.habit!.targetDaysPerWeek ?? '').toString();
+      // ... etc
     }
   }
 
-  Future<void> _fetchAvailableCategories() async {
+  // REMOVA O MÉTODO ANTIGO: _fetchAvailableCategories()
+
+  // ADICIONE ESTE NOVO MÉTODO:
+  Future<void> _loadInitialData() async {
+    if (!mounted) return;
     setState(() => _isLoadingCategories = true);
     try {
-      final response = await http.get(Uri.parse('$_baseUrl/categories'));
-      if (response.statusCode == 200) {
-        List<dynamic> fetchedCategoriesJson = jsonDecode(response.body);
-        if (mounted) {
-          setState(() {
-            _availableCategories =
-                fetchedCategoriesJson
-                    .map((json) => CategoryModel.fromJson(json))
-                    .toList();
-            if (widget.habit != null && widget.habit!.categories.isNotEmpty) {
-              _selectedCategories =
-                  widget.habit!.categories
-                      .map(
-                        (habitCat) => _availableCategories.firstWhere(
-                          (availCat) => availCat.id == habitCat.id,
-                          orElse: () => habitCat,
-                        ),
-                      )
-                      .toList();
-            }
-            _isLoadingCategories = false;
-          });
-        }
-      } else {
-        if (mounted) setState(() => _isLoadingCategories = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Falha ao carregar categorias: ${response.statusCode}',
-            ),
-          ),
-        );
+      // Usa o novo serviço de cache!
+      _availableCategories = await CategoryService().getCategories();
+
+      // Mantém a lógica para preencher as categorias já selecionadas em modo de edição.
+      if (widget.habit != null && widget.habit!.categories.isNotEmpty) {
+        _selectedCategories =
+            widget.habit!.categories
+                .map(
+                  (habitCat) => _availableCategories.firstWhere(
+                    (availCat) => availCat.id == habitCat.id,
+                    orElse: () => habitCat,
+                  ),
+                )
+                .toList();
       }
     } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao carregar categorias: $e')),
+        );
+      }
+    } finally {
       if (mounted) setState(() => _isLoadingCategories = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao carregar categorias: $e')),
-      );
     }
   }
 
